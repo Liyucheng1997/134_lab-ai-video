@@ -28,16 +28,39 @@ _VOICE_CACHE.mkdir(parents=True, exist_ok=True)
 
 _model = None
 
-# 内置音色：使用 f5_tts 自带的参考片段（F5 为中英双语模型，英文参考也能念好中文）。
-_BUILTIN_VOICES = {
-    "沉稳男声": ("multi/country.flac",
+# 两段 f5_tts 自带的男声参考片段（F5 为中英双语模型，英文参考也能念好中文）。
+_REF = {
+    "country": ("multi/country.flac",
         "Six spoons of fresh snow peas, five thick slabs of blue cheese, and maybe a snack for her brother Bob."),
-    "温柔女声": ("multi/main.flac",
-        "Six spoons of fresh snow peas, five thick slabs of blue cheese, and maybe a snack for her brother Bob."),
-    "浑厚男声": ("multi/town.flac",
+    "town": ("multi/town.flac",
         "The difference in the rainbow depends considerably upon the size of the drops, and the width of the "
         "coloured band increases as the size of the drops increases."),
 }
+
+# 全部男声，面向「心灵 / 情感 / 治愈」赛道：通过对参考音做半音微调得到不同质感。
+# 名称 -> (参考片段, 半音偏移；负数更低沉磁性，正数更清亮)
+_BUILTIN_VOICES = {
+    "沉稳男声": ("country", 0.0),
+    "低沉磁性": ("country", -2.5),
+    "清澈叙述": ("country", 1.5),
+    "浑厚旁白": ("town", 0.0),
+    "温暖治愈": ("town", -1.0),
+    "深夜电台": ("town", -2.5),
+    "冷峻哲思": ("town", -3.6),
+}
+
+# 特定音色的节奏微调。speed 是在界面语速基础上的倍率；gap 覆盖默认段间停顿。
+_VOICE_TUNING = {
+    "冷峻哲思": {"speed": 1.08, "gap_min": 0.04, "gap_max": 0.22},
+}
+
+
+def _voice_name() -> str:
+    return config.TTS_VOICE if config.TTS_VOICE in _BUILTIN_VOICES else "沉稳男声"
+
+
+def _voice_tuning() -> dict:
+    return _VOICE_TUNING.get(_voice_name(), {})
 
 
 # ----------------------------------------------------------- torchaudio 兼容补丁
@@ -90,14 +113,24 @@ def _resolve_voice() -> tuple[str, str]:
             sf.write(dest, data, sr, subtype="PCM_16")
         return str(dest), ref_text
 
-    name = config.TTS_VOICE if config.TTS_VOICE in _BUILTIN_VOICES else "温柔女声"
-    rel, ref_text = _BUILTIN_VOICES[name]
+    name = _voice_name()
+    refkey, semis = _BUILTIN_VOICES[name]
+    rel, ref_text = _REF[refkey]
     src = os.path.join(_f5_examples_dir(), rel)
-    dest = _VOICE_CACHE / (name + ".wav")
+    dest = _VOICE_CACHE / f"{refkey}_{semis:+.1f}.wav"
     if not dest.exists():
         data, sr = sf.read(src, dtype="float32", always_2d=False)
         if getattr(data, "ndim", 1) > 1:
             data = data.mean(axis=1)
+        if abs(semis) > 0.01:                       # 半音微调，营造更低沉/清亮的男声
+            try:
+                import librosa
+                data = librosa.effects.pitch_shift(data, sr=sr, n_steps=float(semis))
+            except Exception:
+                pass
+        peak = float(np.max(np.abs(data))) if data.size else 0.0
+        if peak > 0:
+            data = (data * (0.95 / peak)).astype(np.float32)
         sf.write(dest, data, sr, subtype="PCM_16")
     return str(dest), ref_text
 
@@ -116,11 +149,11 @@ def _get_model():
     return _model
 
 
-def _synth_one(text: str, ref_audio: str, ref_text: str) -> tuple[np.ndarray, int]:
+def _synth_one(text: str, ref_audio: str, ref_text: str, speed: float = 1.0) -> tuple[np.ndarray, int]:
     model = _get_model()
     wav, sr, _ = model.infer(
         ref_file=ref_audio, ref_text=ref_text, gen_text=text,
-        speed=1.0, nfe_step=32, cross_fade_duration=0.15,
+        speed=speed, nfe_step=32, cross_fade_duration=0.15,
         remove_silence=True, file_wave=None, show_info=lambda *a, **k: None,
     )
     wav = np.asarray(wav, dtype=np.float32)
@@ -128,6 +161,20 @@ def _synth_one(text: str, ref_audio: str, ref_text: str) -> tuple[np.ndarray, in
     if peak > 0:
         wav = wav * (0.95 / peak)
     return wav, sr
+
+
+def sample(text: str, out_path: Path, voice: str | None = None) -> Path:
+    """合成一小段试听音频（用于前端选音色时预览）。"""
+    if voice:
+        config.TTS_VOICE = voice
+    ref_audio, ref_text = _resolve_voice()
+    tuning = _voice_tuning()
+    speed = config.TTS_SPEED * float(tuning.get("speed", 1.0))
+    wav, sr = _synth_one(text[:60] or "你好，这是配音音色试听。", ref_audio, ref_text,
+                         speed=speed)
+    sf.write(out_path, wav, sr)
+    log("tts", f"试听音频已生成：{out_path.name}")
+    return out_path
 
 
 def synthesize(segments: list[dict], work_dir: Path, total_duration: float = 0.0
@@ -147,7 +194,12 @@ def synthesize(segments: list[dict], work_dir: Path, total_duration: float = 0.0
 
     ref_audio, ref_text = _resolve_voice()
     sr = 24000  # F5 输出采样率
-    gap_min, gap_max = config.TTS_GAP_MIN, config.TTS_GAP_MAX
+    tuning = _voice_tuning()
+    gap_min = float(tuning.get("gap_min", config.TTS_GAP_MIN))
+    gap_max = float(tuning.get("gap_max", config.TTS_GAP_MAX))
+    speed = config.TTS_SPEED * float(tuning.get("speed", 1.0))
+    if tuning:
+        log("tts", f"音色调校：{_voice_name()}，语速 {speed:.2f}x，停顿 {gap_min:.2f}-{gap_max:.2f}s")
 
     clips: list[tuple[int, np.ndarray]] = []   # (起始采样点, 波形)
     retimed: list[dict] = []
@@ -158,7 +210,7 @@ def synthesize(segments: list[dict], work_dir: Path, total_duration: float = 0.0
         text = seg.get("zh", "").strip()
         if not text:
             continue
-        wav, wsr = _synth_one(text, ref_audio, ref_text)
+        wav, wsr = _synth_one(text, ref_audio, ref_text, speed=speed)
         if wsr != sr:
             import librosa
             wav = librosa.resample(wav, orig_sr=wsr, target_sr=sr)
@@ -166,7 +218,12 @@ def synthesize(segments: list[dict], work_dir: Path, total_duration: float = 0.0
 
         start = cursor
         clips.append((int(start * sr), wav))
-        retimed.append({"start": round(start, 3), "end": round(start + dur, 3), "zh": text})
+        retimed.append({
+            "start": round(start, 3),
+            "end": round(start + dur, 3),
+            "zh": text,
+            "text": seg.get("text", "").strip(),
+        })
         cursor = start + dur
 
         # 段间停顿：参考原视频里这一段后的间隔，但限制在 [gap_min, gap_max]

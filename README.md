@@ -9,8 +9,8 @@ YouTube URL
   │
   ├─1. 下载         yt-dlp              → source.mp4 + source.wav(16k)
   ├─2. 转写         faster-whisper(GPU) → segments.json（带时间戳）
-  ├─3. 翻译         DeepSeek API        → translated.json（逐段中文）
-  ├─4. 配音         F5-TTS(GPU)         → dub.wav（按时间戳对齐替换原声）
+  ├─3. 翻译         DeepSeek API        → translated.json（整段上下文翻译，按段回写）
+  ├─4. 配音         F5-TTS(GPU)         → dub.wav + dub_segments.json（顺序配音并重新计时）
   ├─5. 字幕         自建 ASS/SRT        → subs.ass / subs.srt
   └─6. 合成         ffmpeg              → output/<id>_zh.mp4（烧录硬字幕）
 ```
@@ -31,14 +31,36 @@ copy .env.example .env
 # 编辑 .env，填入 DEEPSEEK_API_KEY
 ```
 
-## 网页版（推荐）
+## 网页版（推荐）— 六步流水线
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\web.ps1
 ```
 
-浏览器打开 <http://127.0.0.1:8800>：可**填 YouTube 链接**或**上传本地视频**，选音色/精度/语言，点「开始生成」，
-页面会**实时显示六步进度 + 日志**，完成后直接在线预览并下载 MP4。单卡串行（同时只跑一个任务）。
+浏览器打开 <http://127.0.0.1:8800>。界面是**分步流水线**，每一步可单独配置、运行、预览：
+
+| 步 | 配置项 | 预览 |
+|----|--------|------|
+| 1 下载/导入 | 链接或上传；视频 / 仅音频 | 原视频播放 |
+| 2 语音识别 | 模型(small/large-v3-turbo)、语言 | 逐句原文 |
+| 3 翻译 | **DeepSeek** / **Google 免费** | 中英对照 |
+| 4 中文配音 | 音色（可**试听**）、段间停顿 | 配音音轨试听 |
+| 5 合成 | **原视频** 或 **图片(纯色+标题)**；字幕格式 ass/srt/vtt；中英双语；硬字幕 | 字幕可视化 + 成片 + 下载 |
+| 6 准备发布 | 平台(B站)；只生成信息 / 自动投稿 | 自动生成标题/简介/标签/分区；可上传视频、封面并提交 |
+
+每步产物缓存在 `work/<id>/`，可单独重跑。每步以独立子进程执行（崩溃隔离 + CUDA 安全）。
+
+### B 站自动投稿
+
+在网页第 6 步点击「扫码登录 B站」，用 B 站 App 扫码确认即可。登录态会保存在 `work/bilibili.cookie.json`，不在项目里保存账号密码。
+
+也可以用命令行备用方式扫码：
+
+```powershell
+& "F:\我的编程项目\114_听书软件\.venv\Scripts\python.exe" .\bili_login.py
+```
+
+扫码成功后会生成 `work/bilibili.cookie.json`。之后第 6 步选择「自动投稿到 B站」即可自动上传成片、封面、标题、简介、标签和分区。
 
 ## 命令行运行
 
@@ -65,4 +87,4 @@ powershell -ExecutionPolicy Bypass -File .\run.ps1 "URL" --voice 沉稳男声 --
 
 ## 对齐说明
 
-中文译文常比原文长。配音按每段 `start` 落位，可用时长内放不下时**变速加快**（保音高，上限 `TTS_MAX_SPEEDUP`），仍超出则容忍少量重叠；译文偏短则补静音。这样画面与配音基本同步。
+中文译文常比原文长。当前流程会按翻译后的中文逐段生成配音，再把每段中文音频顺序拼接并写出 `dub_segments.json`，第 5 步字幕优先使用这个重新计时后的文件，因此成片里的中文配音和中文字幕会对齐。

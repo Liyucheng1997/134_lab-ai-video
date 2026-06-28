@@ -95,11 +95,46 @@ WHISPER_DEVICE = os.environ.get("WHISPER_DEVICE", "cuda")
 WHISPER_COMPUTE_TYPE = os.environ.get("WHISPER_COMPUTE_TYPE", "float16")
 
 # ---------------------------------------------------------------- TTS
-TTS_VOICE = os.environ.get("TTS_VOICE", "温柔女声")  # 见 tts.py 内置音色
-# 段间停顿（秒）：顺序拼接配音时，每段之间保留的停顿，参考原间隔但限制在此区间。
+TTS_VOICE = os.environ.get("TTS_VOICE", "沉稳男声")  # 见 tts.py 内置音色（全男声）
+TTS_SPEED = float(os.environ.get("TTS_SPEED", "1.0"))  # 配音语速，0.7~1.3 微调
+# 段间停顿（秒）：顺序拼接配音时，每段之间保留的停顿（默认即可，无需在界面调）。
 TTS_GAP_MIN = float(os.environ.get("TTS_GAP_MIN", "0.08"))
 TTS_GAP_MAX = float(os.environ.get("TTS_GAP_MAX", "0.45"))
 
 # ---------------------------------------------------------------- 字幕样式
 SUB_FONT = os.environ.get("SUB_FONT", "Microsoft YaHei")
 SUB_FONTSIZE = int(os.environ.get("SUB_FONTSIZE", "54"))  # 字号按 1080p 画布计，libass 自动随分辨率缩放
+SUB_PRIMARY = os.environ.get("SUB_PRIMARY", "#FFFFFF")    # 字体颜色
+SUB_OUTLINE = os.environ.get("SUB_OUTLINE", "#000000")    # 描边颜色
+SUB_POSITION = os.environ.get("SUB_POSITION", "bottom")   # bottom | middle | top
+SUB_BOLD = os.environ.get("SUB_BOLD", "1")               # 是否加粗
+
+# 字幕样式预设（面向 灵性 / 情感 / 荣格心理学 赛道）：用户只选其一，无需逐项调。
+# 字号偏大、清晰；颜色温暖/沉静，描边保证任何画面上都看得清。
+SUB_PRESETS = [
+    {"key": "classic", "name": "经典白字", "font": "Microsoft YaHei", "fontsize": 70,
+     "primary": "#FFFFFF", "outline": "#000000", "position": "bottom", "bold": "1"},
+    {"key": "cream", "name": "温暖米黄", "font": "KaiTi", "fontsize": 74,
+     "primary": "#FFF1D0", "outline": "#3A2410", "position": "bottom", "bold": "1"},
+    {"key": "gold", "name": "治愈淡金", "font": "Microsoft YaHei", "fontsize": 70,
+     "primary": "#FFD98A", "outline": "#241A0A", "position": "bottom", "bold": "1"},
+    {"key": "serene", "name": "静谧青蓝", "font": "Microsoft YaHei", "fontsize": 70,
+     "primary": "#D6ECFF", "outline": "#0E2440", "position": "bottom", "bold": "1"},
+    {"key": "jung", "name": "荣格深邃", "font": "SimSun", "fontsize": 72,
+     "primary": "#F2ECDD", "outline": "#1C1430", "position": "bottom", "bold": "1"},
+]
+SUB_PRESET = os.environ.get("SUB_PRESET", "classic")
+
+# ---------------------------------------------------------------- B 站自动投稿
+# 通过 bili_login.py 扫码生成，避免在项目里保存账号密码。
+BILIBILI_COOKIE_FILE = os.environ.get("BILIBILI_COOKIE_FILE", str(WORK_DIR / "bilibili.cookie.json"))
+# 默认投到「知识 / 社科·法律·心理」，更适合哲学、心理、观点类内容；也可在第 6 步覆盖。
+BILIBILI_TID = int(os.environ.get("BILIBILI_TID", "228"))
+BILIBILI_COPYRIGHT = int(os.environ.get("BILIBILI_COPYRIGHT", "1"))  # 1 自制；2 转载
+BILIBILI_UPLOAD_LINE = os.environ.get("BILIBILI_UPLOAD_LINE", "bda2")
+BILIBILI_UPLOAD_FALLBACK_LINES = [
+    x.strip() for x in os.environ.get("BILIBILI_UPLOAD_FALLBACK_LINES", "bda2,bda,tx").split(",")
+    if x.strip()
+]
+BILIBILI_UPLOAD_THREADS = int(os.environ.get("BILIBILI_UPLOAD_THREADS", "3"))
+BILIBILI_UPLOAD_TIMEOUT = int(os.environ.get("BILIBILI_UPLOAD_TIMEOUT", "60"))

@@ -12,6 +12,8 @@ librosa>=0.11
 # 翻译 / 下载
 requests>=2.32
 yt-dlp>=2026.6
+biliup>=1.2
+qrcode[pil]>=8.2
 
 # Web 服务
 fastapi>=0.115
