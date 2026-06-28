@@ -1,0 +1,16 @@
+# 密钥
+.env
+
+# 运行时产物（大文件）
+work/
+output/
+
+# 本地依赖：模型权重(~1.8G) 与 ffmpeg 静态构建(~160M)，不入库
+models/
+tools/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/

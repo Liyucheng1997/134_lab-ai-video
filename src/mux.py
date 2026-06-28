@@ -1,0 +1,65 @@
+"""第 5 步（下）：烧录中文硬字幕 + 替换为中文配音，输出最终 mp4。"""
+from __future__ import annotations
+
+import subprocess
+from pathlib import Path
+
+from . import config
+from .utils import _NO_WINDOW, log, run
+
+
+def _escape_subs_path(ass_path: Path) -> str:
+    """ffmpeg subtitles 滤镜在 Windows 上需要转义盘符冒号和反斜杠。"""
+    p = str(ass_path).replace("\\", "/").replace(":", "\\:")
+    return p
+
+
+def _nvenc_listed() -> bool:
+    try:
+        out = subprocess.run(
+            [config.FFMPEG, "-hide_banner", "-encoders"],
+            capture_output=True, text=True, creationflags=_NO_WINDOW,
+        )
+        return "h264_nvenc" in (out.stdout or "")
+    except Exception:
+        return False
+
+
+def _build_cmd(video: Path, dub_audio: Path, vf: str, vcodec: list[str], out_path: Path) -> list[str]:
+    return [
+        config.FFMPEG, "-y",
+        "-i", str(video),
+        "-i", str(dub_audio),
+        "-vf", vf,
+        "-map", "0:v:0", "-map", "1:a:0",
+        *vcodec,
+        "-c:a", "aac", "-b:a", "192k",
+        "-shortest",
+        str(out_path),
+    ]
+
+
+def mux(video: Path, dub_audio: Path, ass: Path, out_path: Path) -> Path:
+    """合成：原视频画面 + 烧录字幕 + 中文配音音轨。
+
+    优先尝试 NVENC 硬件编码；若驱动/版本不匹配则自动回退到 libx264。
+    """
+    vf = f"subtitles='{_escape_subs_path(ass)}'"
+    x264 = ["-c:v", "libx264", "-preset", "medium", "-crf", "20", "-pix_fmt", "yuv420p"]
+
+    if _nvenc_listed():
+        nvenc = ["-c:v", "h264_nvenc", "-preset", "p5", "-cq", "23"]
+        try:
+            log("mux", "尝试 NVENC 硬件编码")
+            run(_build_cmd(video, dub_audio, vf, nvenc, out_path),
+                desc="烧录字幕 + 合成配音（NVENC）")
+            log("mux", f"输出完成：{out_path}")
+            return out_path
+        except RuntimeError as e:
+            log("mux", f"NVENC 不可用（{str(e)[:80]}…），回退 libx264")
+
+    log("mux", "使用 libx264 软件编码")
+    run(_build_cmd(video, dub_audio, vf, x264, out_path),
+        desc="烧录字幕 + 合成配音（libx264）")
+    log("mux", f"输出完成：{out_path}")
+    return out_path
