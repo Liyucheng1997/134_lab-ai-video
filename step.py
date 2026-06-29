@@ -31,10 +31,12 @@ def main() -> int:
 
     try:
         result = steps.run_step(args.step, args.job_id, cfg)
-        log("step", f"{args.step} 完成 {json.dumps(result, ensure_ascii=False)}")
+        label = "归档保存" if args.step == "publish" else args.step
+        log("step", f"{label} 完成 {json.dumps(result, ensure_ascii=False)}")
         return 0
     except Exception as e:  # noqa: BLE001
-        log("error", f"{args.step} 失败：{e}")
+        label = "归档保存" if args.step == "publish" else args.step
+        log("error", f"{label} 失败：{e}")
         return 1
 
 

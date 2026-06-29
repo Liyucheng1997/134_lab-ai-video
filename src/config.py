@@ -1,9 +1,8 @@
-"""集中配置：复用 114 听书软件的 venv、本地 ffmpeg、DeepSeek 翻译等。
+"""集中配置：本项目环境、本地 ffmpeg、DeepSeek 翻译等。
 
 设计原则：
-- 不修改 114 项目的环境，只复用它的 .venv（torch+cu128 / faster-whisper / f5-tts）。
-- ffmpeg 用项目内自带的静态构建（tools/），并在导入时塞进 PATH，
-  这样 yt-dlp / torchcodec / f5-tts 都能找到它。
+- Python、Qwen3-TTS、faster-whisper 都放在当前项目 tools/qwen3-tts-env。
+- ffmpeg 用项目内兼容当前 NVIDIA 驱动的静态构建，并在导入时塞进 PATH。
 """
 from __future__ import annotations
 
@@ -30,19 +29,36 @@ os.environ["HF_HUB_CACHE"] = str(_HF_HOME / "hub")
 os.environ["TORCH_HOME"] = str(MODELS_DIR / "torch")
 os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
 
-# 复用 114 听书软件的虚拟环境（Python 3.11 + CUDA 12.8）
-REUSE_VENV = Path(r"F:\我的编程项目\114_听书软件\.venv")
-REUSE_VENV_PY = REUSE_VENV / "Scripts" / "python.exe"
+# 本项目自己的 Python 环境（从 Qwen3-TTS 可用环境克隆，含 CUDA torch / Qwen3-TTS）。
+PROJECT_VENV = TOOLS_DIR / "qwen3-tts-env"
+PROJECT_VENV_PY = PROJECT_VENV / "python.exe"
+# 兼容旧变量名，避免外部脚本还引用 REUSE_VENV。
+REUSE_VENV = PROJECT_VENV
+REUSE_VENV_PY = PROJECT_VENV_PY
+if PROJECT_VENV.exists():
+    _path_parts = [
+        str(PROJECT_VENV),
+        str(PROJECT_VENV / "Scripts"),
+        str(PROJECT_VENV / "Library" / "bin"),
+    ]
+    _nvidia_root = PROJECT_VENV / "Lib" / "site-packages" / "nvidia"
+    if _nvidia_root.exists():
+        _path_parts.extend(str(p) for p in _nvidia_root.glob("*\\bin") if p.exists())
+    os.environ["PATH"] = os.pathsep.join(_path_parts + [os.environ.get("PATH", "")])
 
 # ---------------------------------------------------------------- ffmpeg
 def _find_ffmpeg() -> tuple[str, str]:
     """返回 (ffmpeg, ffprobe) 可执行路径，并把所在目录加进 PATH。"""
-    # 1) 项目内静态构建
-    for cand in TOOLS_DIR.rglob("ffmpeg.exe"):
+    # 1) 优先使用当前项目内已验证兼容本机驱动的 ffmpeg。
+    preferred = TOOLS_DIR / "ffmpeg-nvenc-compatible" / "bin" / "ffmpeg.exe"
+    candidates = [preferred] if preferred.exists() else []
+    # 2) 项目内其它静态构建
+    candidates.extend(c for c in TOOLS_DIR.rglob("ffmpeg.exe") if c != preferred)
+    for cand in candidates:
         bin_dir = cand.parent
         os.environ["PATH"] = str(bin_dir) + os.pathsep + os.environ.get("PATH", "")
         return str(cand), str(bin_dir / "ffprobe.exe")
-    # 2) 系统 PATH
+    # 3) 系统 PATH
     sys_ff = shutil.which("ffmpeg")
     if sys_ff:
         return sys_ff, shutil.which("ffprobe") or "ffprobe"
@@ -53,6 +69,9 @@ FFMPEG, FFPROBE = _find_ffmpeg()
 
 
 def _find_yt_dlp() -> str:
+    project_ytdlp = PROJECT_VENV / "Scripts" / "yt-dlp.exe"
+    if project_ytdlp.exists():
+        return str(project_ytdlp)
     exe = shutil.which("yt-dlp")
     if exe:
         return exe
@@ -95,11 +114,27 @@ WHISPER_DEVICE = os.environ.get("WHISPER_DEVICE", "cuda")
 WHISPER_COMPUTE_TYPE = os.environ.get("WHISPER_COMPUTE_TYPE", "float16")
 
 # ---------------------------------------------------------------- TTS
-TTS_VOICE = os.environ.get("TTS_VOICE", "沉稳男声")  # 见 tts.py 内置音色（全男声）
-TTS_SPEED = float(os.environ.get("TTS_SPEED", "1.0"))  # 配音语速，0.7~1.3 微调
+TTS_ENGINE = os.environ.get("TTS_ENGINE", "qwen3")
+TTS_VOICE = os.environ.get("TTS_VOICE", "ryan")
+TTS_SPEED = float(os.environ.get("TTS_SPEED", "1.15"))  # 配音语速，0.7~1.3 微调
 # 段间停顿（秒）：顺序拼接配音时，每段之间保留的停顿（默认即可，无需在界面调）。
 TTS_GAP_MIN = float(os.environ.get("TTS_GAP_MIN", "0.08"))
 TTS_GAP_MAX = float(os.environ.get("TTS_GAP_MAX", "0.45"))
+
+# Qwen3-TTS：默认使用 CustomVoice 的 ryan，模型和缓存都放在当前项目内。
+QWEN_TTS_MODEL = os.environ.get("QWEN_TTS_MODEL", "Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice")
+QWEN_TTS_MODE = os.environ.get("QWEN_TTS_MODE", "custom-voice")
+QWEN_TTS_LANGUAGE = os.environ.get("QWEN_TTS_LANGUAGE", "Chinese")
+QWEN_TTS_INSTRUCT = os.environ.get(
+    "QWEN_TTS_INSTRUCT",
+    "适合中文视频口播，声音自然、清晰、可信，节奏稳定但不拖沓。",
+)
+QWEN_TTS_DEVICE = os.environ.get("QWEN_TTS_DEVICE", "cuda:0")
+QWEN_TTS_DTYPE = os.environ.get("QWEN_TTS_DTYPE", "auto")
+QWEN_TTS_ATTENTION = os.environ.get("QWEN_TTS_ATTENTION", "sdpa")
+QWEN_TTS_CACHE_DIR = Path(os.environ.get("QWEN_TTS_CACHE_DIR", str(MODELS_DIR / "qwen3-tts")))
+QWEN_TTS_MAX_CHARS = int(os.environ.get("QWEN_TTS_MAX_CHARS", "280"))
+QWEN_TTS_BATCH_SIZE = int(os.environ.get("QWEN_TTS_BATCH_SIZE", "2"))
 
 # ---------------------------------------------------------------- 字幕样式
 SUB_FONT = os.environ.get("SUB_FONT", "Microsoft YaHei")

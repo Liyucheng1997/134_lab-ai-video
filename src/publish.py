@@ -1,14 +1,17 @@
-"""第 6 步：准备发布 / 自动投稿。
+"""第 6 步：生成保存信息并归档。
 
 默认根据中文译文生成 B 站标题/简介/标签/分区建议，连同成片、封面一起放进
-work/<id>/publish/。当 mode=upload 时，通过本地 Biliup cookie 自动投稿到 B 站。
+output/<日期>_<简短标题>/。同时在 work/<id>/publish/metadata.json
+保留一份索引，供网页预览和断点状态判断使用。
 """
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import shutil
 import sys
+from datetime import datetime
 from pathlib import Path
 
 import requests
@@ -17,8 +20,9 @@ from . import config
 from .utils import load_json, log, save_json
 
 _SYS = (
-    "你是B站(哔哩哔哩)运营。根据给定的中文视频文案，生成适合B站的投稿信息。"
+    "你是中文短视频运营。根据给定的中文视频文案，生成适合平台保存/发布时使用的信息。"
     "只输出 JSON：{\"title\":\"不超过80字的吸引人标题\","
+    "\"project_title\":\"4-12个中文字符的简短项目名，用于文件夹命名\","
     "\"desc\":\"简介，2-4句，可含简单换行\","
     "\"tags\":[\"标签1\",\"标签2\",\"...最多10个...\"],"
     "\"partition\":\"建议分区，如 知识/科技/生活/影视 等\"}。不要多余文字。"
@@ -41,7 +45,7 @@ _PARTITION_TID = {
 
 def _gen_metadata(text: str) -> dict:
     if not config.DEEPSEEK_API_KEY:
-        raise RuntimeError("缺少 DEEPSEEK_API_KEY，无法生成投稿信息。")
+        raise RuntimeError("缺少 DEEPSEEK_API_KEY，无法生成保存信息。")
     resp = requests.post(
         f"{config.DEEPSEEK_BASE_URL}/chat/completions",
         headers={"Authorization": f"Bearer {config.DEEPSEEK_API_KEY}",
@@ -62,7 +66,7 @@ def _gen_metadata(text: str) -> dict:
 
 def gen_title(text: str) -> str:
     """用 DeepSeek 生成一句醒目的中文封面标题；无 key 时回退到首句。"""
-    fallback = (text.strip().replace("\n", " ").split("。")[0] or "心灵之旅")[:18]
+    fallback = (text.strip().replace("\n", " ").split("。")[0] or "话语权丢失")[:16]
     if not config.DEEPSEEK_API_KEY:
         return fallback
     try:
@@ -72,15 +76,17 @@ def gen_title(text: str) -> str:
                      "Content-Type": "application/json"},
             json={"model": config.DEEPSEEK_MODEL,
                   "messages": [
-                      {"role": "system", "content": "你是情感/心灵成长类视频的标题策划。"
-                       "根据文案给一个吸引人、有共鸣的中文封面标题，12-18字，不要书名号引号，只输出标题。"},
+                      {"role": "system", "content": "你是短视频封面大字标题策划。"
+                       "参考B站/YouTube中文封面：短、狠、强反差，适合放在首帧大字上。"
+                       "根据文案生成8-16个中文字符的封面标题，可带一个问号或感叹号；"
+                       "优先使用情绪词、反差词、关键结论，不要书名号引号，只输出标题。"},
                       {"role": "user", "content": text[:2000]}],
                   "temperature": 1.1, "stream": False},
             timeout=60,
         )
         resp.raise_for_status()
         t = resp.json()["choices"][0]["message"]["content"].strip().strip("《》\"'").splitlines()[0]
-        return (t or fallback)[:20]
+        return (t or fallback)[:18]
     except Exception:
         return fallback
 
@@ -91,6 +97,87 @@ def _tid_from_partition(partition: str, fallback: int | None = None) -> int:
         if key in text:
             return tid
     return int(fallback or config.BILIBILI_TID)
+
+
+def _theme_from_meta(meta: dict, full_text: str) -> str:
+    """从标题/分区/正文里取 4-8 个中文字符，作为归档目录主题。"""
+    for cand in (meta.get("title", ""), meta.get("partition", ""), full_text):
+        text = "".join(re.findall(r"[\u4e00-\u9fff]", str(cand)))
+        if len(text) >= 4:
+            return text[:8]
+    text = "".join(re.findall(r"[\u4e00-\u9fff]", str(meta.get("title", ""))))
+    return (text or "视频主题")[:8]
+
+
+def _safe_dir_part(text: str, fallback: str = "视频主题") -> str:
+    text = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "", str(text or ""))
+    text = re.sub(r"\s+", "", text).strip(". ")
+    return (text or fallback)[:20]
+
+
+def _project_title_from_meta(meta: dict, full_text: str) -> str:
+    for cand in (meta.get("project_title", ""), meta.get("title", ""), full_text):
+        text = "".join(re.findall(r"[\u4e00-\u9fffA-Za-z0-9]", str(cand)))
+        if len(text) >= 4:
+            return _safe_dir_part(text[:12])
+    return _safe_dir_part(_theme_from_meta(meta, full_text))
+
+
+def _next_archive_dir(theme: str) -> Path:
+    stamp = datetime.now().strftime("%Y%m%d")
+    theme = _safe_dir_part(theme)
+    base = config.OUTPUT_DIR / f"{stamp}_{theme}"
+    archive_dir = base
+    suffix = 2
+    while archive_dir.exists():
+        archive_dir = config.OUTPUT_DIR / f"{base.name}_{suffix:02d}"
+        suffix += 1
+    archive_dir.mkdir(parents=True)
+    return archive_dir
+
+
+def _rename_archive_dir(archive_dir: Path, project_title: str) -> Path:
+    stamp = datetime.now().strftime("%Y%m%d")
+    target_base = archive_dir.parent / f"{stamp}_{_safe_dir_part(project_title)}"
+    target = target_base
+    suffix = 2
+    while target.exists() and target.resolve() != archive_dir.resolve():
+        target = archive_dir.parent / f"{target_base.name}_{suffix:02d}"
+        suffix += 1
+    if target.resolve() != archive_dir.resolve():
+        try:
+            archive_dir.rename(target)
+        except OSError as e:
+            # Windows 上如果资源管理器/播放器正在预览目录，整目录 rename 可能被拒绝。
+            # 复制到新项目目录后继续归档，避免第 6 步因目录名调整失败。
+            log("archive", f"项目目录被占用，改用复制方式生成新目录：{e}")
+            shutil.copytree(archive_dir, target, dirs_exist_ok=True)
+            try:
+                shutil.rmtree(archive_dir)
+            except OSError:
+                log("archive", f"旧目录暂时无法删除，稍后可手动清理：{archive_dir}")
+    target.mkdir(parents=True, exist_ok=True)
+    return target
+
+
+def _write_archive_files(archive_dir: Path, meta: dict) -> None:
+    (archive_dir / "title.txt").write_text(meta.get("title", ""), encoding="utf-8")
+    (archive_dir / "description.txt").write_text(meta.get("desc", ""), encoding="utf-8")
+    tags = meta.get("tags") or []
+    (archive_dir / "tags.txt").write_text("\n".join(map(str, tags)), encoding="utf-8")
+    info = [
+        f"# {meta.get('title', '')}",
+        "",
+        "## 简介",
+        meta.get("desc", ""),
+        "",
+        "## 标签",
+        "、".join(map(str, tags)),
+        "",
+        "## 分区",
+        f"{meta.get('partition', '')} / TID {meta.get('tid', '')}",
+    ]
+    (archive_dir / "publish_info.md").write_text("\n".join(info), encoding="utf-8")
 
 
 def _upload_bilibili(meta: dict, *, final_video: Path, cover: Path | None,
@@ -155,8 +242,15 @@ def _upload_bilibili(meta: dict, *, final_video: Path, cover: Path | None,
             ret = json.loads(out_json.read_text(encoding="utf-8"))
             log("publish", f"B站投稿提交成功，线路：{line}")
             return ret
-        msg = f"{line}: 退出码 {proc.returncode}"
+        detail = ""
+        for row in reversed((stdout or "").splitlines()):
+            if "[error]" in row or "失败" in row:
+                detail = row.split("] ", 2)[-1].strip()
+                break
+        msg = f"{line}: {detail or f'退出码 {proc.returncode}'}"
         errors.append(msg)
+        if "code=601" in msg or "上传视频过快" in msg:
+            raise RuntimeError("B站视频上传被限流：" + msg)
         log("publish", f"线路失败，换下一条：{msg}")
 
     raise RuntimeError("B站视频上传失败，已尝试所有线路：" + " | ".join(errors))
@@ -164,56 +258,74 @@ def _upload_bilibili(meta: dict, *, final_video: Path, cover: Path | None,
 
 def prepare(*, work_dir: Path, final_video: Path, platform: str = "bilibili",
             mode: str = "prepare", tid: int | None = None,
-            copyright: int | None = None) -> dict:
-    """生成投稿信息包，返回 metadata dict（同时写入 publish/metadata.json）。"""
+            copyright: int | None = None,
+            archive_dir: Path | str | None = None) -> dict:
+    """生成保存信息包并归档，返回 metadata dict。"""
     translated = load_json(work_dir / "translated.json") or []
     full_text = "".join(s.get("zh", "") for s in translated)[:4000]
     if not full_text.strip():
         raise RuntimeError("缺少翻译文案，请先完成翻译步骤。")
+    if not final_video.exists():
+        raise RuntimeError(f"找不到成片：{final_video}")
 
-    log("publish", f"为 {platform} 生成投稿信息…")
-    meta = _gen_metadata(full_text)
+    log("archive", f"生成保存信息…")
+    raw_meta = _gen_metadata(full_text)
+
+    project_title = _project_title_from_meta(raw_meta, full_text)
+    theme = _theme_from_meta(raw_meta, full_text)
+    archive_dir = Path(archive_dir) if archive_dir else _next_archive_dir(project_title)
+    archive_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        rel_work_dir = work_dir.resolve().relative_to(archive_dir.resolve())
+    except ValueError:
+        rel_work_dir = None
+    try:
+        rel_final_video = final_video.resolve().relative_to(archive_dir.resolve())
+    except ValueError:
+        rel_final_video = None
+    archive_dir = _rename_archive_dir(archive_dir, project_title)
+    if rel_work_dir is not None:
+        work_dir = archive_dir / rel_work_dir
+    if rel_final_video is not None:
+        final_video = archive_dir / rel_final_video
 
     pub_dir = work_dir / "publish"
     pub_dir.mkdir(exist_ok=True)
-    # 拷贝成片
-    if final_video.exists():
-        shutil.copy(final_video, pub_dir / "video.mp4")
-    # 封面：优先用 compose 生成的 cover.png
-    cover = work_dir / "cover.png"
-    if cover.exists():
-        shutil.copy(cover, pub_dir / "cover.png")
 
-    selected_tid = int(tid or _tid_from_partition(meta.get("partition", "")))
+    video_dst = archive_dir / "video.mp4"
+    shutil.copy(final_video, video_dst)
+
+    cover = work_dir / "cover.png"
+    cover_dst = archive_dir / "cover.png"
+    if cover.exists():
+        shutil.copy(cover, cover_dst)
+
+    selected_tid = int(tid or _tid_from_partition(raw_meta.get("partition", "")))
     selected_copyright = int(copyright or config.BILIBILI_COPYRIGHT)
 
     meta = {
         "platform": platform,
-        "mode": mode,
-        "title": meta.get("title", "")[:80],
-        "desc": meta.get("desc", ""),
-        "tags": meta.get("tags", [])[:10],
-        "partition": meta.get("partition", ""),
+        "mode": "archive",
+        "title": raw_meta.get("title", "")[:80],
+        "desc": raw_meta.get("desc", ""),
+        "tags": raw_meta.get("tags", [])[:10],
+        "partition": raw_meta.get("partition", ""),
+        "project_title": project_title,
         "tid": selected_tid,
         "copyright": selected_copyright,
-        "video": str(pub_dir / "video.mp4"),
-        "cover": str(pub_dir / "cover.png") if (pub_dir / "cover.png").exists() else "",
+        "theme": theme,
+        "created_at": datetime.now().isoformat(timespec="seconds"),
+        "archive_dir": str(archive_dir),
+        "video": str(video_dst),
+        "cover": str(cover_dst) if cover_dst.exists() else "",
+        "uploaded": False,
     }
 
-    if platform == "bilibili" and mode == "upload":
-        ret = _upload_bilibili(
-            meta,
-            final_video=pub_dir / "video.mp4",
-            cover=(pub_dir / "cover.png" if (pub_dir / "cover.png").exists() else None),
-            tid=selected_tid,
-            copyright=selected_copyright,
-        )
-        meta["uploaded"] = True
-        meta["upload_result"] = ret
-        save_json(pub_dir / "upload_result.json", ret)
-    else:
-        meta["uploaded"] = False
+    if mode == "upload":
+        log("archive", "已禁用自动上传：本步骤只生成信息并归档。")
 
+    _write_archive_files(archive_dir, meta)
+    save_json(archive_dir / "metadata.json", meta)
     save_json(pub_dir / "metadata.json", meta)
-    log("publish", f"投稿信息已生成：{meta['title']}")
+    log("archive", f"信息已归档：{archive_dir}")
     return meta

@@ -4,6 +4,7 @@
 """
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from . import (compose as compose_mod, config, download, publish as publish_mod,
@@ -17,18 +18,46 @@ STEP_DEFS = [
     {"key": "translate", "name": "翻译为中文",     "needs": "asr",       "artifact": "translated.json"},
     {"key": "tts",       "name": "中文配音",       "needs": "translate", "artifact": "dub.wav"},
     {"key": "compose",   "name": "合成视频",       "needs": "tts",       "artifact": "final.mp4"},
-    {"key": "publish",   "name": "准备发布",       "needs": "compose",   "artifact": "publish/metadata.json"},
+    {"key": "publish",   "name": "保存信息归档",   "needs": "compose",   "artifact": "publish/metadata.json"},
 ]
 
 
 def work_dir_of(job_id: str) -> Path:
+    map_file = config.OUTPUT_DIR / "_job_dirs.json"
     d = config.WORK_DIR / job_id
+    if map_file.exists():
+        try:
+            data = json.loads(map_file.read_text(encoding="utf-8"))
+            entry = data.get(job_id) if isinstance(data, dict) else None
+            if isinstance(entry, dict) and entry.get("cache_dir"):
+                d = Path(entry["cache_dir"])
+            elif isinstance(entry, str):
+                d = Path(entry)
+        except Exception:
+            d = config.WORK_DIR / job_id
     d.mkdir(parents=True, exist_ok=True)
     return d
 
 
 def final_path(job_id: str) -> Path:
-    return config.OUTPUT_DIR / f"{job_id}_zh.mp4"
+    return work_dir_of(job_id) / "final.mp4"
+
+
+def _register_output_project(job_id: str, archive_dir: str | Path) -> None:
+    project = Path(archive_dir)
+    cache = project / "cache"
+    cache.mkdir(parents=True, exist_ok=True)
+    map_file = config.OUTPUT_DIR / "_job_dirs.json"
+    try:
+        data = json.loads(map_file.read_text(encoding="utf-8")) if map_file.exists() else {}
+        if not isinstance(data, dict):
+            data = {}
+    except Exception:
+        data = {}
+    data[job_id] = {"project_dir": str(project), "cache_dir": str(cache)}
+    tmp = map_file.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp.replace(map_file)
 
 
 # ----------------------------------------------------------------- 1) 下载/导入
@@ -135,16 +164,19 @@ def run_compose(job_id: str, cfg: dict) -> dict:
     return {"mode": mode, "output": str(out), "title": title}
 
 
-# ----------------------------------------------------------------- 6) 发布
+# ----------------------------------------------------------------- 6) 保存信息归档
 def run_publish(job_id: str, cfg: dict) -> dict:
     wd = work_dir_of(job_id)
     meta = publish_mod.prepare(
         work_dir=wd, final_video=final_path(job_id),
         platform=cfg.get("platform", "bilibili"),
-        mode=cfg.get("mode", "prepare"),
+        mode="archive",
         tid=cfg.get("tid"),
         copyright=cfg.get("copyright"),
+        archive_dir=cfg.get("archive_dir"),
     )
+    if meta.get("archive_dir"):
+        _register_output_project(job_id, meta["archive_dir"])
     return meta
 
 

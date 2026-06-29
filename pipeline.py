@@ -50,7 +50,7 @@ def main() -> int:
     ap.add_argument("--voice", help="配音音色（沉稳男声/温柔女声/浑厚男声）")
     ap.add_argument("--whisper", help="ASR 模型（small / large-v3-turbo …）")
     ap.add_argument("--lang", help="源语言代码，留空自动检测（如 en/ja/ko）")
-    ap.add_argument("--out", help="输出文件路径（默认 output/<id>_zh.mp4）")
+    ap.add_argument("--out", help="输出文件路径（默认 work/<id>/final.mp4）")
     args = ap.parse_args()
 
     from src import orchestrator
@@ -87,7 +87,7 @@ def main() -> int:
         log("pipeline", f"合成阶段失败（退出码 {rc}）")
         return rc
 
-    out_path = args.out or str(config.OUTPUT_DIR / f"{job_id}_zh.mp4")
+    out_path = args.out or str(config.WORK_DIR / job_id / "final.mp4")
     log("pipeline", f"全部完成，用时 {time.time() - t0:.0f}s → {out_path}")
     return 0
 

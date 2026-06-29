@@ -1,13 +1,12 @@
-# 本项目在 Windows + NVIDIA(RTX 50 系) 上开发，复用「114 听书软件」的 .venv（Python 3.11 + CUDA 12.8）。
-# 若要独立安装，核心依赖如下（GPU 版 torch 请按官网指引装 cu12x 轮子）：
+# 本项目在 Windows + NVIDIA(RTX 50 系) 上开发，默认使用 tools/qwen3-tts-env。
+# 该环境已包含 CUDA 版 torch、Qwen3-TTS、faster-whisper 和 Web 依赖。
 
 # ASR
 faster-whisper>=1.2
 
 # TTS（含 torch / torchaudio，建议用 CUDA 版）
-f5-tts>=1.1
+qwen-tts>=0.1.1
 soundfile>=0.13
-librosa>=0.11
 
 # 翻译 / 下载
 requests>=2.32

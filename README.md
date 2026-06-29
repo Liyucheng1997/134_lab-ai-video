@@ -10,19 +10,19 @@ YouTube URL
   ├─1. 下载         yt-dlp              → source.mp4 + source.wav(16k)
   ├─2. 转写         faster-whisper(GPU) → segments.json（带时间戳）
   ├─3. 翻译         DeepSeek API        → translated.json（整段上下文翻译，按段回写）
-  ├─4. 配音         F5-TTS(GPU)         → dub.wav + dub_segments.json（顺序配音并重新计时）
+  ├─4. 配音         Qwen3-TTS(GPU, ryan) → dub.wav + dub_segments.json（连续分块配音并重新计时）
   ├─5. 字幕         自建 ASS/SRT        → subs.ass / subs.srt
-  └─6. 合成         ffmpeg              → output/<id>_zh.mp4（烧录硬字幕）
+  └─6. 归档         ffmpeg              → output/<编号>_<主题>_<日期>/（成片、封面、标题、简介）
 ```
 
 中间产物都在 `work/<视频id>/`，**支持断点续跑**：删掉某一步的文件即可强制重算那一步。
 
-## 环境（复用，无需重装）
+## 环境
 
-- **复用 `114_听书软件/.venv`**：Python 3.11 + PyTorch 2.11(cu128) + faster-whisper + F5-TTS，已适配 RTX 50 系列。
-- **ffmpeg**：项目自带静态构建在 `tools/`（含 libass，用于烧字幕），导入时自动加入 PATH。
-- **yt-dlp**：复用系统已安装的 `yt-dlp.exe`。
-- **模型缓存**：`faster-whisper-small` 与 `F5-TTS` 权重已在本机 HuggingFace 缓存，离线可用。
+- **项目内环境 `tools/qwen3-tts-env`**：Python 3.12 + PyTorch 2.12(cu130) + Qwen3-TTS + faster-whisper，已适配 RTX 50 系列。
+- **ffmpeg**：项目优先使用 `tools/ffmpeg-nvenc-compatible/`（含 libass + NVENC）。这个版本兼容当前 NVIDIA 驱动；过新的 ffmpeg 会要求 NVENC API 13.1 / 610+ 驱动并导致硬件编码不可用。
+- **yt-dlp**：优先使用本项目环境里的 `tools/qwen3-tts-env/Scripts/yt-dlp.exe`。
+- **模型缓存**：Qwen3-TTS 权重在 `models/qwen3-tts/`，Whisper 权重在 `models/huggingface/`。
 
 ## 配置
 
@@ -44,46 +44,44 @@ powershell -ExecutionPolicy Bypass -File .\web.ps1
 | 1 下载/导入 | 链接或上传；视频 / 仅音频 | 原视频播放 |
 | 2 语音识别 | 模型(small/large-v3-turbo)、语言 | 逐句原文 |
 | 3 翻译 | **DeepSeek** / **Google 免费** | 中英对照 |
-| 4 中文配音 | 音色（可**试听**）、段间停顿 | 配音音轨试听 |
+| 4 中文配音 | Qwen3-TTS 音色（默认 `ryan`，可**试听**）、语速 | 配音音轨试听 |
 | 5 合成 | **原视频** 或 **图片(纯色+标题)**；字幕格式 ass/srt/vtt；中英双语；硬字幕 | 字幕可视化 + 成片 + 下载 |
-| 6 准备发布 | 平台(B站)；只生成信息 / 自动投稿 | 自动生成标题/简介/标签/分区；可上传视频、封面并提交 |
+| 6 生成信息归档 | 信息模板(B站)、分区、版权类型 | 自动生成标题/简介/标签/分区，并把成片、封面和数据保存到 `output` 子文件夹 |
 
 每步产物缓存在 `work/<id>/`，可单独重跑。每步以独立子进程执行（崩溃隔离 + CUDA 安全）。
 
-### B 站自动投稿
+### 输出归档
 
-在网页第 6 步点击「扫码登录 B站」，用 B 站 App 扫码确认即可。登录态会保存在 `work/bilibili.cookie.json`，不在项目里保存账号密码。
+第 6 步不再自动上传。它只生成发布信息并归档到 `output/<编号>_<4-8个字中文主题>_<创建日期>/`，例如：
 
-也可以用命令行备用方式扫码：
-
-```powershell
-& "F:\我的编程项目\114_听书软件\.venv\Scripts\python.exe" .\bili_login.py
+```text
+output/01_心灵成长_20260629/
 ```
 
-扫码成功后会生成 `work/bilibili.cookie.json`。之后第 6 步选择「自动投稿到 B站」即可自动上传成片、封面、标题、简介、标签和分区。
+归档文件夹内包含 `video.mp4`、`cover.png`、`title.txt`、`description.txt`、`tags.txt`、`publish_info.md` 和 `metadata.json`。
 
 ## 命令行运行
 
 ```powershell
-# 默认温柔女声、small 模型、自动检测语言
+# 默认 ryan 音色、small 模型、自动检测语言
 powershell -ExecutionPolicy Bypass -File .\run.ps1 "https://www.youtube.com/watch?v=XXXX"
 
 # 指定音色 / 更高质量 ASR / 源语言
 powershell -ExecutionPolicy Bypass -File .\run.ps1 "URL" --voice 沉稳男声 --whisper large-v3-turbo --lang en
 ```
 
-成品在 `output/<id>_zh.mp4`。
+成品在 `output/<编号>_<主题>_<日期>/video.mp4`。
 
 ## 参数
 
 | 参数 | 说明 |
 |------|------|
-| `--voice` | 配音音色：沉稳男声 / 温柔女声 / 浑厚男声 |
+| `--voice` | Qwen3-TTS 音色：默认 `ryan`，也可用 `aiden` / `dylan` / `eric` / `serena` 等 |
 | `--whisper` | ASR 模型：`small`（默认，离线）/ `large-v3-turbo`（更准） |
 | `--lang` | 源语言代码，留空自动检测（en/ja/ko…） |
 | `--out` | 自定义输出路径 |
 
-声音克隆：在 `.env` 里设 `TTS_REF_AUDIO` 指向一段参考人声即可。
+Qwen3-TTS 配置可在 `.env` 里覆盖：`TTS_VOICE=ryan`、`TTS_SPEED=1.15`、`QWEN_TTS_MODEL=Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice`。
 
 ## 对齐说明
 

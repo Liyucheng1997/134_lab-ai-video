@@ -26,7 +26,7 @@ def make_job_id(url: str | None, file_name: str | None) -> str:
     return "up_" + hashlib.sha1(seed.encode("utf-8")).hexdigest()[:9]
 
 
-# 重要：faster-whisper(ctranslate2) 与 F5-TTS(torch) 同进程加载 CUDA 会触发 0xC0000005
+# 重要：faster-whisper(ctranslate2) 与 Qwen3-TTS(torch) 同进程加载 CUDA 可能互相影响或崩溃。
 # 访问冲突崩溃。因此把流程拆成两个阶段，由 pipeline.py 放到各自独立的子进程里跑：
 #   prep   = 下载/导入 + 识别 + 翻译   （只用 ctranslate2）
 #   render = 配音 + 字幕 + 合成        （只用 torch）
@@ -82,7 +82,7 @@ def run_render(*, job_id: str, voice: str | None = None, out_path: str | None = 
     subtitles.write_srt(retimed, work_dir)
     ass = subtitles.write_ass(retimed, work_dir)
 
-    out_path = out_path or str(config.OUTPUT_DIR / f"{job_id}_zh.mp4")
+    out_path = out_path or str(work_dir / "final.mp4")
     mux.mux(video, dub, ass, out_path)
     log("pipeline", f"任务 {job_id} 完成 → {out_path}")
     return Path(out_path)

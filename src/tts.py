@@ -1,247 +1,288 @@
-"""第 4 步：用 F5-TTS（复用 114 听书软件）逐段合成中文配音，并按原时间戳对齐成整条音轨。
+"""第 4 步：用 Qwen3-TTS 生成中文配音。
 
-对齐策略（替换原声）：
-- 每段在其原始 start 处落位；
-- 可用时长 room = 下一段 start - 本段 start；
-- 配音比 room 长 → 变速加快（保音高），最多 TTS_MAX_SPEEDUP 倍，仍超出则容忍少量重叠；
-- 配音比 room 短 → 后面补静音。
-最终得到与视频等长的单声道 24k 音轨。
+默认使用 Qwen3-TTS CustomVoice 的 ryan 音色。为了减少逐句生成导致的音色和
+停顿漂移，正文会按字符数分块生成，每块内部保持连续口播，再按文本权重给字幕
+重新计时。
 """
 from __future__ import annotations
 
-import glob
-import hashlib
 import os
+import subprocess
 from pathlib import Path
-
-os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
-os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
 
 import numpy as np
 import soundfile as sf
 
 from . import config
-from .utils import log
-
-_VOICE_CACHE = config.TOOLS_DIR / "voice_cache"
-_VOICE_CACHE.mkdir(parents=True, exist_ok=True)
+from .utils import _NO_WINDOW, load_json, log, media_duration, save_json
 
 _model = None
 
-# 两段 f5_tts 自带的男声参考片段（F5 为中英双语模型，英文参考也能念好中文）。
-_REF = {
-    "country": ("multi/country.flac",
-        "Six spoons of fresh snow peas, five thick slabs of blue cheese, and maybe a snack for her brother Bob."),
-    "town": ("multi/town.flac",
-        "The difference in the rainbow depends considerably upon the size of the drops, and the width of the "
-        "coloured band increases as the size of the drops increases."),
-}
-
-# 全部男声，面向「心灵 / 情感 / 治愈」赛道：通过对参考音做半音微调得到不同质感。
-# 名称 -> (参考片段, 半音偏移；负数更低沉磁性，正数更清亮)
 _BUILTIN_VOICES = {
-    "沉稳男声": ("country", 0.0),
-    "低沉磁性": ("country", -2.5),
-    "清澈叙述": ("country", 1.5),
-    "浑厚旁白": ("town", 0.0),
-    "温暖治愈": ("town", -1.0),
-    "深夜电台": ("town", -2.5),
-    "冷峻哲思": ("town", -3.6),
-}
-
-# 特定音色的节奏微调。speed 是在界面语速基础上的倍率；gap 覆盖默认段间停顿。
-_VOICE_TUNING = {
-    "冷峻哲思": {"speed": 1.08, "gap_min": 0.04, "gap_max": 0.22},
+    "ryan": "ryan",
+    "aiden": "aiden",
+    "dylan": "dylan",
+    "eric": "eric",
+    "ono_anna": "ono_anna",
+    "serena": "serena",
+    "sohee": "sohee",
+    "uncle_fu": "uncle_fu",
+    "vivian": "vivian",
 }
 
 
 def _voice_name() -> str:
-    return config.TTS_VOICE if config.TTS_VOICE in _BUILTIN_VOICES else "沉稳男声"
+    voice = (config.TTS_VOICE or "ryan").strip()
+    return voice if voice in _BUILTIN_VOICES else "ryan"
 
 
-def _voice_tuning() -> dict:
-    return _VOICE_TUNING.get(_voice_name(), {})
+def _configure_qwen_paths() -> None:
+    env_path = config.PROJECT_VENV
+    model_root = config.QWEN_TTS_CACHE_DIR
+    model_root.mkdir(parents=True, exist_ok=True)
+
+    os.environ["HF_HOME"] = str(model_root / "hf_home")
+    os.environ["HUGGINGFACE_HUB_CACHE"] = str(model_root / "huggingface")
+    os.environ["HF_HUB_CACHE"] = str(model_root / "huggingface")
+    os.environ["MODELSCOPE_CACHE"] = str(model_root / "modelscope")
+    os.environ["XDG_CACHE_HOME"] = str(model_root / "xdg_cache")
+    os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
+
+    path_parts = [
+        env_path,
+        env_path / "Scripts",
+        env_path / "Library" / "bin",
+        Path(config.FFMPEG).parent,
+    ]
+    os.environ["PATH"] = os.pathsep.join(map(str, path_parts)) + os.pathsep + os.environ.get("PATH", "")
 
 
-# ----------------------------------------------------------- torchaudio 兼容补丁
-def _patch_torchaudio_backend():
-    """让 torchaudio.load/info 走 soundfile，绕开需要 ffmpeg 共享库的 torchcodec。"""
-    try:
-        import torch
-        import torchaudio
+def _dtype_from_config():
+    import torch
 
-        if getattr(torchaudio.load, "_patched", False):
-            return
-
-        def _load(path, *a, **k):
-            data, sr = sf.read(str(path), dtype="float32", always_2d=True)
-            return torch.from_numpy(data.T.copy()), sr
-
-        _load._patched = True
-        torchaudio.load = _load
-
-        def _info(path, *a, **k):
-            info = sf.info(str(path))
-            return type("AudioInfo", (), {
-                "sample_rate": info.samplerate,
-                "num_frames": info.frames,
-                "num_channels": info.channels,
-            })()
-
-        torchaudio.info = _info
-    except Exception:
-        pass
-
-
-def _f5_examples_dir() -> str:
-    import importlib.util
-    spec = importlib.util.find_spec("f5_tts")
-    base = os.path.dirname(spec.origin) if spec.origin else list(spec.submodule_search_locations)[0]
-    return os.path.join(base, "infer", "examples")
-
-
-def _resolve_voice() -> tuple[str, str]:
-    """返回 (ref_audio_wav, ref_text)。支持自定义声音克隆。"""
-    custom = os.environ.get("TTS_REF_AUDIO", "").strip()
-    if custom and Path(custom).exists():
-        ref_text = os.environ.get("TTS_REF_TEXT", "").strip()
-        dest = _VOICE_CACHE / ("custom_" + hashlib.sha1(custom.encode()).hexdigest()[:8] + ".wav")
-        if not dest.exists():
-            data, sr = sf.read(custom, dtype="float32", always_2d=False)
-            if getattr(data, "ndim", 1) > 1:
-                data = data.mean(axis=1)
-            sf.write(dest, data, sr, subtype="PCM_16")
-        return str(dest), ref_text
-
-    name = _voice_name()
-    refkey, semis = _BUILTIN_VOICES[name]
-    rel, ref_text = _REF[refkey]
-    src = os.path.join(_f5_examples_dir(), rel)
-    dest = _VOICE_CACHE / f"{refkey}_{semis:+.1f}.wav"
-    if not dest.exists():
-        data, sr = sf.read(src, dtype="float32", always_2d=False)
-        if getattr(data, "ndim", 1) > 1:
-            data = data.mean(axis=1)
-        if abs(semis) > 0.01:                       # 半音微调，营造更低沉/清亮的男声
-            try:
-                import librosa
-                data = librosa.effects.pitch_shift(data, sr=sr, n_steps=float(semis))
-            except Exception:
-                pass
-        peak = float(np.max(np.abs(data))) if data.size else 0.0
-        if peak > 0:
-            data = (data * (0.95 / peak)).astype(np.float32)
-        sf.write(dest, data, sr, subtype="PCM_16")
-    return str(dest), ref_text
+    dtype = config.QWEN_TTS_DTYPE
+    mapping = {
+        "auto": torch.bfloat16 if torch.cuda.is_available() else torch.float32,
+        "bfloat16": torch.bfloat16,
+        "float16": torch.float16,
+        "float32": torch.float32,
+    }
+    return mapping.get(dtype, mapping["auto"])
 
 
 def _get_model():
     global _model
     if _model is not None:
         return _model
-    import torch
-    _patch_torchaudio_backend()
-    from f5_tts.api import F5TTS
 
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    log("tts", f"加载 F5-TTS（{torch.cuda.get_device_name(0) if device == 'cuda' else 'CPU'}）")
-    _model = F5TTS(model="F5TTS_v1_Base", device=device)
+    _configure_qwen_paths()
+    import torch
+    from qwen_tts import Qwen3TTSModel
+
+    if config.QWEN_TTS_DEVICE.startswith("cuda") and not torch.cuda.is_available():
+        raise RuntimeError("Qwen3-TTS 配置为 CUDA，但当前 torch.cuda.is_available() 为 false")
+    if torch.cuda.is_available():
+        torch.set_float32_matmul_precision("high")
+        torch.backends.cuda.matmul.allow_tf32 = True
+
+    kwargs = {
+        "device_map": config.QWEN_TTS_DEVICE,
+        "dtype": _dtype_from_config(),
+    }
+    if config.QWEN_TTS_ATTENTION:
+        kwargs["attn_implementation"] = config.QWEN_TTS_ATTENTION
+
+    device_name = torch.cuda.get_device_name(0) if torch.cuda.is_available() else "CPU"
+    log("tts", f"加载 Qwen3-TTS：{config.QWEN_TTS_MODEL}（{device_name}）")
+    _model = Qwen3TTSModel.from_pretrained(config.QWEN_TTS_MODEL, **kwargs)
     return _model
 
 
-def _synth_one(text: str, ref_audio: str, ref_text: str, speed: float = 1.0) -> tuple[np.ndarray, int]:
-    model = _get_model()
-    wav, sr, _ = model.infer(
-        ref_file=ref_audio, ref_text=ref_text, gen_text=text,
-        speed=speed, nfe_step=32, cross_fade_duration=0.15,
-        remove_silence=True, file_wave=None, show_info=lambda *a, **k: None,
+def _atempo_filter(speed: float) -> str:
+    if speed <= 0:
+        raise ValueError("TTS_SPEED 必须大于 0")
+    factors: list[float] = []
+    remaining = speed
+    while remaining > 2.0:
+        factors.append(2.0)
+        remaining /= 2.0
+    while remaining < 0.5:
+        factors.append(0.5)
+        remaining /= 0.5
+    factors.append(remaining)
+    return ",".join(f"atempo={factor:.6g}" for factor in factors)
+
+
+def _apply_speed(path: Path, speed: float) -> None:
+    if abs(speed - 1.0) < 0.001:
+        return
+    temp = path.with_name(f"{path.stem}.speedtmp{path.suffix}")
+    proc = subprocess.run(
+        [config.FFMPEG, "-y", "-i", str(path), "-filter:a", _atempo_filter(speed), str(temp)],
+        capture_output=True,
+        text=True,
+        creationflags=_NO_WINDOW,
     )
+    if proc.returncode != 0:
+        raise RuntimeError(f"Qwen3-TTS 语速处理失败：{(proc.stderr or '')[-1200:]}")
+    temp.replace(path)
+
+
+def _normalize_wav(wav: np.ndarray) -> np.ndarray:
     wav = np.asarray(wav, dtype=np.float32)
     peak = float(np.max(np.abs(wav))) if wav.size else 0.0
     if peak > 0:
         wav = wav * (0.95 / peak)
-    return wav, sr
+    return wav
+
+
+def _generate_batch(texts: list[str]) -> tuple[list[np.ndarray], int]:
+    model = _get_model()
+    if config.QWEN_TTS_MODE == "voice-design":
+        wavs, sr = model.generate_voice_design(
+            text=texts,
+            language=config.QWEN_TTS_LANGUAGE,
+            instruct=config.QWEN_TTS_INSTRUCT,
+        )
+    else:
+        wavs, sr = model.generate_custom_voice(
+            text=texts,
+            language=config.QWEN_TTS_LANGUAGE,
+            speaker=_voice_name(),
+            instruct=config.QWEN_TTS_INSTRUCT,
+        )
+    return [_normalize_wav(wav) for wav in wavs], int(sr)
+
+
+def _generate_to_file(text: str, out_path: Path) -> tuple[np.ndarray, int]:
+    wavs, sr = _generate_batch([text])
+    wav = wavs[0]
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    sf.write(out_path, wav, sr)
+    _apply_speed(out_path, config.TTS_SPEED)
+    wav, sr = sf.read(out_path, dtype="float32", always_2d=False)
+    if getattr(wav, "ndim", 1) > 1:
+        wav = wav.mean(axis=1)
+    return np.asarray(wav, dtype=np.float32), int(sr)
+
+
+def _scene_weight(text: str) -> float:
+    text = text.strip()
+    punctuation = sum(1 for ch in text if ch in "，。！？；：、,.!?;:")
+    content = sum(1 for ch in text if not ch.isspace())
+    return max(1.0, content + punctuation * 2.5)
+
+
+def _chunk_segments(segments: list[dict]) -> list[list[dict]]:
+    chunks: list[list[dict]] = []
+    current: list[dict] = []
+    current_len = 0
+    max_chars = max(120, int(config.QWEN_TTS_MAX_CHARS))
+
+    for seg in segments:
+        text = (seg.get("zh") or "").strip()
+        if not text:
+            continue
+        text_len = len(text)
+        if current and current_len + text_len > max_chars:
+            chunks.append(current)
+            current = []
+            current_len = 0
+        current.append(seg)
+        current_len += text_len
+    if current:
+        chunks.append(current)
+    return chunks
 
 
 def sample(text: str, out_path: Path, voice: str | None = None) -> Path:
     """合成一小段试听音频（用于前端选音色时预览）。"""
     if voice:
         config.TTS_VOICE = voice
-    ref_audio, ref_text = _resolve_voice()
-    tuning = _voice_tuning()
-    speed = config.TTS_SPEED * float(tuning.get("speed", 1.0))
-    wav, sr = _synth_one(text[:60] or "你好，这是配音音色试听。", ref_audio, ref_text,
-                         speed=speed)
-    sf.write(out_path, wav, sr)
+    _configure_qwen_paths()
+    _generate_to_file(text[:120] or "你好，这是配音音色试听。", out_path)
     log("tts", f"试听音频已生成：{out_path.name}")
     return out_path
 
 
 def synthesize(segments: list[dict], work_dir: Path, total_duration: float = 0.0
                ) -> tuple[Path, list[dict]]:
-    """顺序拼接中文配音，去掉原视频里的大段空白。
-
-    不再对齐原始时间戳：每段配音首尾相接，段间只留一个很短的停顿（参考原始间隔但封顶）。
-    返回 (dub.wav, 重新计时后的字幕段)。最终音轨通常比原视频短，视频会在配音结束处截断。
-    """
-    from .utils import load_json, save_json
-
     out_path = work_dir / "dub.wav"
     seg_cache = work_dir / "dub_segments.json"
     if out_path.exists() and seg_cache.exists():
         log("tts", "复用已有配音音轨")
         return out_path, load_json(seg_cache)
 
-    ref_audio, ref_text = _resolve_voice()
-    sr = 24000  # F5 输出采样率
-    tuning = _voice_tuning()
-    gap_min = float(tuning.get("gap_min", config.TTS_GAP_MIN))
-    gap_max = float(tuning.get("gap_max", config.TTS_GAP_MAX))
-    speed = config.TTS_SPEED * float(tuning.get("speed", 1.0))
-    if tuning:
-        log("tts", f"音色调校：{_voice_name()}，语速 {speed:.2f}x，停顿 {gap_min:.2f}-{gap_max:.2f}s")
+    chunks = _chunk_segments(segments)
+    if not chunks:
+        raise RuntimeError("没有可合成的中文文本")
 
-    clips: list[tuple[int, np.ndarray]] = []   # (起始采样点, 波形)
+    batch_size = max(1, int(getattr(config, "QWEN_TTS_BATCH_SIZE", 2)))
+    log("tts", f"使用 Qwen3-TTS / {_voice_name()} 合成配音，共 {len(chunks)} 个文本块，batch={batch_size}")
+
+    all_audio: list[np.ndarray] = []
     retimed: list[dict] = []
+    sr_ref: int | None = None
     cursor = 0.0
-    n = len(segments)
+    speed = max(float(config.TTS_SPEED), 0.01)
 
-    for i, seg in enumerate(segments):
-        text = seg.get("zh", "").strip()
-        if not text:
-            continue
-        wav, wsr = _synth_one(text, ref_audio, ref_text, speed=speed)
-        if wsr != sr:
-            import librosa
-            wav = librosa.resample(wav, orig_sr=wsr, target_sr=sr)
-        dur = len(wav) / sr
+    chunk_texts = [
+        "\n".join((seg.get("zh") or "").strip() for seg in chunk if (seg.get("zh") or "").strip())
+        for chunk in chunks
+    ]
 
-        start = cursor
-        clips.append((int(start * sr), wav))
-        retimed.append({
-            "start": round(start, 3),
-            "end": round(start + dur, 3),
-            "zh": text,
-            "text": seg.get("text", "").strip(),
-        })
-        cursor = start + dur
+    for batch_start in range(0, len(chunks), batch_size):
+        batch_chunks = chunks[batch_start:batch_start + batch_size]
+        batch_texts = chunk_texts[batch_start:batch_start + batch_size]
+        try:
+            batch_wavs, sr = _generate_batch(batch_texts)
+        except RuntimeError as e:
+            if batch_size <= 1 or "out of memory" not in str(e).lower():
+                raise
+            log("tts", "batch 显存不足，自动降级为单块生成")
+            batch_wavs = []
+            sr = sr_ref or 24000
+            for text in batch_texts:
+                one_wavs, sr = _generate_batch([text])
+                batch_wavs.extend(one_wavs)
+        if sr_ref is None:
+            sr_ref = sr
+        elif sr != sr_ref:
+            raise RuntimeError(f"Qwen3-TTS 输出采样率不一致：{sr_ref} vs {sr}")
 
-        # 段间停顿：参考原视频里这一段后的间隔，但限制在 [gap_min, gap_max]
-        if i + 1 < n:
-            orig_gap = segments[i + 1].get("start", seg["end"]) - seg.get("end", start + dur)
-            cursor += min(max(orig_gap, gap_min), gap_max)
-        log("tts", f"  [{i + 1}/{n}] -> {start:6.1f}s (+{dur:4.1f}s)  {text[:40]}")
+        for offset, (chunk, text, wav) in enumerate(zip(batch_chunks, batch_texts, batch_wavs), start=1):
+            chunk_index = batch_start + offset
+            raw_duration = len(wav) / sr
+            chunk_duration = raw_duration / speed
+            weights = [_scene_weight(seg.get("zh", "")) for seg in chunk]
+            total_weight = sum(weights) or 1.0
+            pos = cursor
+            for seg, weight in zip(chunk, weights):
+                dur = chunk_duration * weight / total_weight
+                retimed.append({
+                    "start": round(pos, 3),
+                    "end": round(pos + dur, 3),
+                    "zh": (seg.get("zh") or "").strip(),
+                    "text": (seg.get("text") or "").strip(),
+                })
+                pos += dur
 
-    total_samples = int(cursor * sr) + sr // 2
-    master = np.zeros(max(total_samples, 1), dtype=np.float32)
-    for pos, wav in clips:
-        end = min(pos + len(wav), total_samples)
-        master[pos:end] += wav[:end - pos]
+            all_audio.append(wav)
+            cursor += chunk_duration
+            if chunk_index < len(chunks):
+                gap = min(max(config.TTS_GAP_MIN, 0.0), config.TTS_GAP_MAX)
+                if gap > 0:
+                    all_audio.append(np.zeros(int(gap * speed * sr), dtype=np.float32))
+                    cursor += gap
+            log("tts", f"  [{chunk_index}/{len(chunks)}] {chunk_duration:.1f}s  {text[:40]}")
 
+    sr_final = sr_ref or 24000
+    master = np.concatenate(all_audio) if all_audio else np.zeros(1, dtype=np.float32)
     peak = float(np.max(np.abs(master))) if master.size else 0.0
     if peak > 1.0:
         master = master / peak * 0.97
-    sf.write(out_path, master, sr)
+    sf.write(out_path, master, sr_final)
+    _apply_speed(out_path, config.TTS_SPEED)
     save_json(seg_cache, retimed)
-    log("tts", f"配音音轨完成：{out_path.name}（时长 {cursor:.0f}s，原视频更长的部分将被截断）")
+    log("tts", f"配音音轨完成：{out_path.name}（时长 {media_duration(out_path):.0f}s）")
     return out_path, retimed

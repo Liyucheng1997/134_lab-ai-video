@@ -21,10 +21,44 @@
       radial-gradient(820px 460px at 102% 4%,rgba(138,92,246,.28),transparent 55%),
       radial-gradient(700px 520px at 50% 108%,rgba(17,196,214,.22),transparent 60%),
       linear-gradient(135deg,var(--bg1),var(--bg2));background-attachment:fixed;min-height:100vh}
-  .wrap{max-width:1280px;margin:0 auto;padding:30px 26px 90px}
+  .wrap{max-width:1680px;margin:0 auto;padding:30px 26px 90px}
   h1{font-size:27px;margin:0 0 4px;font-weight:800;letter-spacing:.5px;
     background:linear-gradient(120deg,var(--brand),var(--brand2));-webkit-background-clip:text;background-clip:text;color:transparent}
   .sub{color:var(--mut);margin:0 0 20px;font-size:14px}
+  .app{display:grid;grid-template-columns:340px minmax(0,1fr);gap:20px;align-items:start}
+  @media(max-width:980px){.app{grid-template-columns:1fr}.queue-panel{position:static!important;max-height:none!important}}
+  .queue-panel{position:sticky;top:22px;max-height:calc(100vh - 44px);overflow:auto;background:var(--card);
+    border:1px solid var(--glass);border-radius:18px;box-shadow:var(--sh-sm);padding:16px;backdrop-filter:var(--blur);
+    -webkit-backdrop-filter:var(--blur)}
+  .qhead{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px}
+  .qtitle{font-size:17px;font-weight:800}
+  .qsum{font-size:12px;color:var(--mut)}
+  .qinput{min-height:96px}
+  .qactions{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+  .qactions .btn{margin-top:0;padding:9px 12px;font-size:13px;border-radius:10px}
+  .qactions .btn.ghost{padding:8px 11px}
+  .qlist{display:flex;flex-direction:column;gap:10px;margin-top:14px}
+  .qitem{border:1px solid var(--line);background:var(--soft);border-radius:12px;padding:10px;cursor:pointer}
+  .qitem.active{border-color:var(--brand);background:rgba(255,255,255,.84);box-shadow:0 8px 20px rgba(85,102,255,.14)}
+  .qitem.running{border-color:rgba(245,166,35,.6)}
+  .qitem.done{border-color:rgba(16,185,129,.5)}
+  .qitem.error{border-color:rgba(244,71,107,.6)}
+  .qitem.active,.qitem.done.active,.qitem.running.active,.qitem.error.active{border-color:var(--brand);background:#fff;box-shadow:0 8px 20px rgba(85,102,255,.16)}
+  .qtop{display:flex;align-items:center;gap:8px}
+  .qidx{width:24px;height:24px;border-radius:50%;display:grid;place-items:center;flex:none;background:#fff;border:1px solid var(--line);
+    color:var(--mut);font-size:12px;font-weight:800}
+  .qname{min-width:0;flex:1;font-size:13px;font-weight:700;line-height:1.35;word-break:break-word}
+  .qstatus{font-size:11px;border-radius:20px;padding:2px 8px;background:#fff;color:var(--mut);white-space:nowrap}
+  .qitem.running .qstatus{background:rgba(245,166,35,.14);color:#b36d00}
+  .qitem.done .qstatus{background:rgba(16,185,129,.14);color:var(--ok)}
+  .qitem.error .qstatus{background:rgba(244,71,107,.12);color:var(--err)}
+  .qmeta{display:grid;grid-template-columns:1fr 1fr;gap:4px 8px;margin-top:8px;font-size:12px;color:var(--mut)}
+  .qbar{height:5px;background:#e1e5f1;border-radius:5px;overflow:hidden;margin-top:8px}
+  .qbar>i{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--brand),var(--flow))}
+  .qtools{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+  .qtool{border:1px solid var(--line);background:#fff;border-radius:8px;padding:4px 7px;font-size:12px;cursor:pointer;color:var(--ink)}
+  .qtool:disabled{opacity:.45;cursor:not-allowed}
+  .main{min-width:0}
 
   /* 顶部控制条 + 产线状态 */
   .top{display:flex;align-items:center;gap:18px;background:var(--card);border:1px solid var(--glass);
@@ -34,6 +68,7 @@
     background:linear-gradient(135deg,var(--brand),var(--brand2));box-shadow:0 8px 20px rgba(85,102,255,.3);transition:.2s;white-space:nowrap}
   .runall:hover{filter:brightness(1.06);transform:translateY(-1px)}
   .runall:disabled{opacity:.5;cursor:not-allowed;box-shadow:none;transform:none}
+  .runall.secondary{background:var(--soft);border:1px solid var(--line);color:var(--ink);box-shadow:none}
   .strip{display:flex;align-items:center;flex:1;min-width:420px}
   .snode{display:flex;align-items:center;gap:8px;cursor:pointer}
   .sdot{width:30px;height:30px;border-radius:50%;flex:none;display:grid;place-items:center;font-size:13px;font-weight:800;
@@ -104,6 +139,8 @@
   .btn:hover{filter:brightness(1.05);transform:translateY(-1px)}
   .btn:disabled{opacity:.5;cursor:not-allowed;box-shadow:none;transform:none}
   .btn.ghost{background:var(--soft);border:1px solid var(--line);color:var(--ink);font-weight:600;font-size:14px;padding:10px 16px;margin-top:0;box-shadow:none}
+  .body .btn.ghost{margin-top:16px}
+  .step-actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
   .hide{display:none!important}
   .bar{height:9px;background:var(--soft);border-radius:6px;overflow:hidden;margin:16px 0 4px}
   .bar>i{display:block;height:100%;width:0;border-radius:6px;background:linear-gradient(90deg,var(--brand),var(--flow));transition:width .4s}
@@ -129,6 +166,7 @@
   .errbox{background:rgba(244,71,107,.08);border:1px solid rgba(244,71,107,.4);color:#c0304f;padding:11px;border-radius:11px;margin-top:12px;white-space:pre-wrap;font-size:13px}
   .fn{margin-top:7px;font-size:13px;color:var(--ok)}
   .hint{font-size:12px;color:var(--mut);margin-top:7px}
+  .est{font-size:12px;color:var(--mut);margin-top:3px}
   input[type=range]{width:100%;accent-color:var(--brand);height:28px}
   .seclbl{margin-top:16px;font-size:13px;color:var(--ink);font-weight:700}
   .subprev{position:relative;height:260px;border-radius:14px;margin-top:8px;overflow:hidden;
@@ -143,32 +181,58 @@
   <h1>🎬 AI 视频自动化 · 流水线</h1>
   <p class="sub">六步生产线，每步可单独配置 / 运行 / 看进度与日志，也可「一键运行」按配置自动走完全程。</p>
 
-  <div class="top">
-    <button class="runall" id="runall" onclick="runAll()">⚡ 一键运行全部</button>
-    <div class="strip" id="strip"></div>
-  </div>
+  <div class="app">
+    <aside class="queue-panel">
+      <div class="qhead">
+        <div>
+          <div class="qtitle">视频队列</div>
+          <div class="qsum" id="qsum">0 个任务</div>
+        </div>
+      </div>
+      <label>添加链接（可一次粘贴多行）</label>
+      <textarea id="queue-links" class="qinput" placeholder="https://...&#10;https://..."></textarea>
+      <div class="qactions">
+        <button class="btn" onclick="addQueueLinks()">添加</button>
+        <button class="btn" id="runqueue" onclick="runQueue()">按顺序运行</button>
+        <button class="btn ghost" id="stopqueue" onclick="stopQueue()">停止排队</button>
+      </div>
+      <div class="hint">点击队列项查看步骤详情；完成后可打开输出文件夹。</div>
+      <div class="qlist" id="queue-list"></div>
+    </aside>
 
-  <div id="cards"></div>
+    <main class="main">
+      <div class="top">
+        <button class="runall" id="runall" onclick="runAll()">一键运行当前任务</button>
+        <button class="runall secondary" id="rerunall" onclick="rerunFrom('download')">重新生成全部</button>
+        <div class="strip" id="strip"></div>
+      </div>
+      <div id="cards"></div>
+    </main>
+  </div>
 </div>
 
 <script>
 const API="";
-let JOB=null,CFG=null,ST=null,prev={},dlFile=null,srcMode="link";
+let JOB=null,CFG=null,ST=null,QST=null,prev={},dlFile=null,srcMode="link",jobES=null,queueES=null;
 const logOpen=new Set(), pvOpen=new Set();
 
 const STEPS=[
   {key:"download",name:"下载 / 导入"},{key:"asr",name:"语音转文字"},{key:"translate",name:"翻译为中文"},
-  {key:"tts",name:"中文配音"},{key:"compose",name:"合成视频"},{key:"publish",name:"准备发布"},
+  {key:"tts",name:"中文配音"},{key:"compose",name:"合成视频"},{key:"publish",name:"保存信息归档"},
 ];
 const BADGE={pending:"待运行",running:"进行中",done:"已完成",error:"出错"};
 
 async function init(){
   CFG=await (await fetch(API+"/api/config")).json();
   JOB=(await (await fetch(API+"/api/jobs",{method:"POST"})).json()).job_id;
-  buildStrip(); buildCards(); openSSE();
+  buildStrip(); buildCards(); openSSE(); openQueueSSE();
 }
 function esc(s){return (s||"").replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));}
 function fmt(s){s=Math.max(0,s|0);const m=(s/60)|0,x=s%60;return `${String(m).padStart(2,"0")}:${String(x).padStart(2,"0")}`;}
+function fmtDur(s){s=Math.max(0,Math.round(+s||0));const h=Math.floor(s/3600),m=Math.floor((s%3600)/60),x=s%60;
+  if(h)return `${h}时${String(m).padStart(2,"0")}分`;
+  if(m)return `${m}分${String(x).padStart(2,"0")}秒`;
+  return `${x}秒`;}
 function elem(h){const t=document.createElement("template");t.innerHTML=h.trim();return t.content.firstChild;}
 
 // ---------- 顶部产线状态 ----------
@@ -191,10 +255,13 @@ function buildCards(){
       <div class="hbar"><i id="hb-${st.key}"></i></div>
       <div class="chead">
         <div class="ring" id="rg-${st.key}"><span class="ico" id="ic-${st.key}">${i+1}</span></div>
-        <div class="ctit"><div class="cnm">${st.name}</div><div class="pill" id="pl-${st.key}">待运行</div></div></div>
+        <div class="ctit"><div class="cnm">${st.name}</div><div class="pill" id="pl-${st.key}">待运行</div><div class="est" id="est-${st.key}">预计 --</div></div></div>
       <div class="body">
         <div id="cfg-${st.key}"></div>
-        <button class="btn" id="rb-${st.key}" onclick="run('${st.key}')">${st.key==="publish"?"生成投稿信息":"运行此步"}</button>
+        <div class="step-actions">
+          <button class="btn" id="rb-${st.key}" onclick="run('${st.key}')">${st.key==="publish"?"保存信息":"运行此步"}</button>
+          <button class="btn ghost" id="rr-${st.key}" onclick="rerunFrom('${st.key}')">从此步重跑</button>
+        </div>
         <div class="bar hide" id="bw-${st.key}"><i id="bp-${st.key}"></i></div>
         <div class="logtoggle" id="lt-${st.key}" onclick="toggleLog('${st.key}')">▸ 运行日志</div>
         <div class="log hide" id="lg-${st.key}"></div>
@@ -210,7 +277,10 @@ function buildCards(){
 function toggleLog(k){logOpen.has(k)?logOpen.delete(k):logOpen.add(k);syncLog(k);}
 function syncLog(k){const o=logOpen.has(k);document.getElementById("lg-"+k).classList.toggle("hide",!o);
   document.getElementById("lt-"+k).textContent=(o?"▾":"▸")+" 运行日志";}
-function togglePv(k){pvOpen.has(k)?pvOpen.delete(k):pvOpen.add(k);syncPv(k);}
+function togglePv(k){
+  if(pvOpen.has(k)){pvOpen.delete(k);syncPv(k);return;}
+  loadPreview(k,true);
+}
 function syncPv(k){const o=pvOpen.has(k);document.getElementById("pv-"+k).classList.toggle("hide",!o);
   document.getElementById("ptg-"+k).textContent=(o?"▾":"▸")+" 输出结果";}
 
@@ -235,7 +305,7 @@ function cfgHtml(key){
       <select id="tr-engine" style="max-width:420px">${CFG.engines.map(e=>`<option value="${e.key}">${e.name}</option>`).join("")}</select>
       ${CFG.has_deepseek?"":'<div class="hint">⚠ 未配置 DEEPSEEK_API_KEY，请用 Google 或在 .env 填 key。</div>'}`;
   if(key==="tts")return `<div class="rowf">
-      <div><label>配音音色（均为男声 · 适合心灵情感赛道）</label><select id="tts-voice">${voiceOptions()}</select></div>
+      <div><label>配音音色（Qwen3-TTS，默认 ryan）</label><select id="tts-voice">${voiceOptions()}</select></div>
       <div style="flex:0 0 auto;display:flex;align-items:flex-end"><button class="btn ghost" onclick="sample(event)">🔊 试听</button></div></div>
       <label>语速 <span id="spd-val">${(+(CFG.speed_default||1)).toFixed(2)}x</span></label>
       <input type="range" id="tts-speed" min="0.7" max="1.3" step="0.05" value="${CFG.speed_default||1.0}"
@@ -257,20 +327,13 @@ function cfgHtml(key){
         <span class="radio"><input type="checkbox" id="cm-burn" checked> 烧录硬字幕</span></div>
       <div class="hint">封面标题由 DeepSeek 自动生成，合成时一并输出可上传的封面图。</div>
       <div class="logtoggle" onclick="loadCues()">👁 预览字幕内容</div><div id="cue-prev"></div>`;
-  if(key==="publish")return `<label>发布平台</label>
+  if(key==="publish")return `<label>信息模板</label>
       <select id="pb-platform" style="max-width:420px"><option value="bilibili">哔哩哔哩 B站</option></select>
-      <label>发布方式</label>
-      <select id="pb-mode" style="max-width:420px">
-        <option value="prepare">只生成投稿信息，手动上传</option>
-        <option value="upload">自动投稿到 B站</option>
-      </select>
       <div class="rowf" style="max-width:560px">
         <div><label>分区 TID</label><input type="text" id="pb-tid" value="228" placeholder="228"></div>
         <div><label>版权类型</label><select id="pb-copyright"><option value="1">自制</option><option value="2">转载</option></select></div>
       </div>
-      <button class="btn ghost" onclick="biliLogin(event)">扫码登录 B站</button>
-      <div class="hint" id="bili-login-status">${CFG.bilibili_logged_in?"已检测到 B站登录态，可以自动投稿。":"自动投稿前请先扫码登录。默认分区 228 为「知识 / 社科·法律·心理」。"}</div>
-      <div id="bili-login-box"></div>`;
+      <div class="hint">第 6 步只生成标题、简介、标签、分区等信息，并把成片、封面和数据保存到 output 项目文件夹。</div>`;
   return "";
 }
 
@@ -316,14 +379,105 @@ function collect(step,forceTts){const g=id=>document.getElementById(id);
   if(step==="compose")return {mode:(document.querySelector('input[name=cmode]:checked')||{}).value||"original",
     bg:g("cm-bg")?.value,bg2:g("cm-bg2")?.value,preset:g("cm-preset").value,
     bilingual:g("cm-bi").checked,burn:g("cm-burn").checked};
-  if(step==="publish")return {platform:g("pb-platform").value,mode:g("pb-mode").value,
+  if(step==="publish")return {platform:g("pb-platform").value,mode:"archive",
     tid:g("pb-tid").value,copyright:g("pb-copyright").value};
   return {};}
+function collectAll(){
+  const cfgs={};STEPS.forEach(s=>cfgs[s.key]=collect(s.key,s.key==="tts"));
+  const qi=currentQueueItem();
+  if(qi&&!cfgs.download.url)cfgs.download.url=qi.url;
+  return cfgs;
+}
 
 // ---------- 运行 ----------
+async function addQueueLinks(){
+  const ta=document.getElementById("queue-links");
+  const links=ta.value.trim();
+  if(!links){alert("请粘贴一个或多个视频链接");return;}
+  const r=await fetch(`${API}/api/queue/items`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({links})});
+  if(!r.ok){alert((await r.json().catch(()=>({}))).detail||"添加失败");return;}
+  ta.value="";
+  const d=await r.json();
+  if(d.items&&d.items[0])selectJob(d.items[0].job_id);
+}
+
+async function runQueue(){
+  const cfgs=collectAll();
+  const r=await fetch(`${API}/api/queue/run`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({configs:cfgs})});
+  if(!r.ok)alert((await r.json().catch(()=>({}))).detail||"启动队列失败");
+}
+
+async function stopQueue(){
+  await fetch(`${API}/api/queue/stop`,{method:"POST"});
+}
+
+async function deleteQueueItem(id,ev){
+  ev.stopPropagation();
+  const r=await fetch(`${API}/api/queue/items/${id}`,{method:"DELETE"});
+  if(!r.ok)alert((await r.json().catch(()=>({}))).detail||"删除失败");
+}
+
+async function moveQueueItem(id,dir,ev){
+  ev.stopPropagation();
+  if(!QST)return;
+  const ids=QST.items.map(x=>x.id);
+  const i=ids.indexOf(id),j=i+dir;
+  if(i<0||j<0||j>=ids.length)return;
+  [ids[i],ids[j]]=[ids[j],ids[i]];
+  const r=await fetch(`${API}/api/queue/reorder`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({ids})});
+  if(!r.ok)alert((await r.json().catch(()=>({}))).detail||"排序失败");
+}
+
+async function openOutput(id,ev){
+  ev.stopPropagation();
+  const r=await fetch(`${API}/api/queue/items/${id}/open-output`,{method:"POST"});
+  if(!r.ok)alert((await r.json().catch(()=>({}))).detail||"打开失败");
+}
+
+async function loadStateOnce(jobId){
+  try{
+    const r=await fetch(`${API}/api/jobs/${jobId}/state`);
+    if(!r.ok||JOB!==jobId)return;
+    ST=await r.json();
+    apply();
+    renderQueue();
+  }catch(e){}
+}
+function selectJob(jobId){
+  if(!jobId)return;
+  const changed=jobId!==JOB;
+  if(!changed){syncSelectedQueueUrl();renderQueue();loadStateOnce(jobId);return;}
+  const reopen=[...pvOpen];               // 记住切换前展开的预览
+  JOB=jobId;
+  ST=null; prev={}; pvOpen.clear(); logOpen.clear();
+  resetPreviews();                        // 清掉上一队列项残留的缓存内容
+  openSSE();
+  syncSelectedQueueUrl();
+  renderQueue();
+  loadStateOnce(jobId).then(()=>{         // 状态就绪后，按新队列项重新加载缓存
+    if(JOB!==jobId||!ST)return;
+    reopen.forEach(k=>{if(ST.steps[k]&&ST.steps[k].status==="done")loadPreview(k,true);});
+  });
+}
+function resetPreviews(){
+  STEPS.forEach(s=>{
+    const pv=document.getElementById("pv-"+s.key);
+    if(pv){pv.innerHTML="";pv.classList.add("hide");}
+    const tg=document.getElementById("ptg-"+s.key);
+    if(tg)tg.textContent="▸ 输出结果";
+  });
+}
+function currentQueueItem(){return QST?(QST.items||[]).find(x=>x.job_id===JOB):null;}
+function syncSelectedQueueUrl(){
+  const qi=currentQueueItem(), input=document.getElementById("dl-url");
+  if(qi&&input)input.value=qi.url;
+}
+
 async function run(step){
   const fd=new FormData();fd.append("step",step);const cfg=collect(step,true);
   if(step==="download"){
+    const qi=currentQueueItem();
+    if(qi&&!cfg.url)cfg.url=qi.url;
     if(srcMode==="file"){if(!dlFile){alert("请选择文件");return;}fd.append("file",dlFile);}
     else if(!cfg.url){alert("请填写链接");return;}}
   fd.append("config_json",JSON.stringify(cfg));
@@ -333,7 +487,9 @@ async function run(step){
 }
 
 async function runAll(){
-  const cfgs={};STEPS.forEach(s=>cfgs[s.key]=collect(s.key,false));
+  const cfgs=collectAll();
+  const qi=currentQueueItem();
+  if(qi&&!cfgs.download.url)cfgs.download.url=qi.url;
   if(srcMode!=="file"&&!cfgs.download.url){alert("请先在第1步填写链接或上传文件");return;}
   const fd=new FormData();fd.append("configs_json",JSON.stringify(cfgs));
   if(srcMode==="file"&&dlFile)fd.append("file",dlFile);
@@ -342,11 +498,87 @@ async function runAll(){
   if(!r.ok)alert((await r.json().catch(()=>({}))).detail||"提交失败");
 }
 
+async function rerunFrom(step){
+  if(!JOB)return;
+  const cfgs=collectAll();
+  if(step==="download"&&srcMode==="file"){alert("重新生成全部暂时只支持队列链接；本地文件请重新上传后用一键运行。");return;}
+  if(step==="download"&&!cfgs.download.url){alert("从第1步重跑需要视频链接");return;}
+  logOpen.add(step);syncLog(step);
+  const r=await fetch(`${API}/api/jobs/${JOB}/rerun_from`,{
+    method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({step,configs:cfgs})
+  });
+  if(!r.ok)alert((await r.json().catch(()=>({}))).detail||"重新生成失败");
+}
+
 // ---------- SSE ----------
-function openSSE(){const es=new EventSource(`${API}/api/jobs/${JOB}/stream`);es.onmessage=ev=>{ST=JSON.parse(ev.data);apply();};}
+function openSSE(){
+  if(jobES)jobES.close();
+  jobES=new EventSource(`${API}/api/jobs/${JOB}/stream`);
+  jobES.onmessage=ev=>{ST=JSON.parse(ev.data);apply();};
+}
+
+function openQueueSSE(){
+  if(queueES)queueES.close();
+  queueES=new EventSource(`${API}/api/queue/stream`);
+  queueES.onmessage=ev=>{QST=JSON.parse(ev.data);renderQueue();};
+}
+
+const QSTATUS={pending:"待执行",running:"执行中",done:"已完成",error:"出错"};
+function itemProgress(item){
+  const steps=STEPS.map(s=>s.key);
+  const done=steps.filter(k=>{
+    if(item.job_id===JOB&&ST)return ST.steps[k].status==="done";
+    return false;
+  }).length;
+  if(item.status==="done")return 100;
+  if(item.status==="pending")return 0;
+  if(item.status==="error")return Math.max(8,done/STEPS.length*100);
+  const cur=steps.indexOf(item.current_step);
+  const stepProg=(item.job_id===JOB&&ST&&item.current_step)?(ST.steps[item.current_step].progress||0):0;
+  return Math.max(4,((Math.max(cur,0)+stepProg/100)/steps.length)*100);
+}
+
+function renderQueue(){
+  const list=document.getElementById("queue-list"),sum=document.getElementById("qsum");
+  if(!QST||!list)return;
+  const items=QST.items||[];
+  const pending=items.filter(x=>x.status==="pending").length;
+  const done=items.filter(x=>x.status==="done").length;
+  const running=items.find(x=>x.status==="running");
+  sum.textContent=`${items.length} 个任务 · ${done} 完成 · ${pending} 待执行`;
+  document.getElementById("runqueue").disabled=!!QST.running||!items.length;
+  document.getElementById("stopqueue").disabled=!QST.running;
+  if(items.length&&!items.some(x=>x.job_id===JOB))selectJob(items[0].job_id);
+  if(running&&running.job_id!==JOB)selectJob(running.job_id);
+  syncSelectedQueueUrl();
+  if(!items.length){list.innerHTML='<div class="hint">还没有队列任务。</div>';return;}
+  list.innerHTML=items.map((it,i)=>{
+    const name=esc(it.title||it.url);
+    const dur=it.estimate&&it.estimate.duration_sec?fmtDur(it.estimate.duration_sec):"--";
+    const rem=it.status==="done"?"0秒":fmtDur((it.estimate||{}).remaining_sec||0);
+    const total=fmtDur((it.estimate||{}).total_sec||0);
+    const current=it.current_step?`当前：${esc((STEPS.find(s=>s.key===it.current_step)||{}).name||it.current_step)}`:(it.error?esc(it.error):"");
+    const pct=itemProgress(it);
+    return `<div class="qitem ${it.status} ${it.job_id===JOB?"active":""}" onclick="selectJob('${it.job_id}')">
+      <div class="qtop"><div class="qidx">${i+1}</div><div class="qname">${name}</div><div class="qstatus">${QSTATUS[it.status]||it.status}</div></div>
+      <div class="qmeta"><div>时长 ${dur}</div><div>预计 ${total}</div><div>已用 ${fmtDur(it.elapsed_sec||0)}</div><div>剩余 ${rem}</div></div>
+      ${current?`<div class="hint">${current}</div>`:""}
+      <div class="qbar"><i style="width:${pct}%"></i></div>
+      <div class="qtools">
+        <button class="qtool" onclick="moveQueueItem('${it.id}',-1,event)" ${i===0||QST.running?"disabled":""}>上移</button>
+        <button class="qtool" onclick="moveQueueItem('${it.id}',1,event)" ${i===items.length-1||QST.running?"disabled":""}>下移</button>
+        <button class="qtool" onclick="deleteQueueItem('${it.id}',event)" ${it.status==="running"?"disabled":""}>删除</button>
+        <button class="qtool" onclick="openOutput('${it.id}',event)" ${it.status!=="done"?"disabled":""}>打开输出</button>
+      </div>
+    </div>`;
+  }).join("");
+}
 
 function apply(){
+  if(!ST)return;
   document.getElementById("runall").disabled=ST.running;
+  document.getElementById("rerunall").disabled=ST.running;
   STEPS.forEach((step,i)=>{
     const k=step.key,info=ST.steps[k];
     const card=document.getElementById("card-"+k);
@@ -355,8 +587,15 @@ function apply(){
     const prevDone=i===0||ST.steps[STEPS[i-1].key].status==="done";
     if(info.status==="pending"&&prevDone)card.classList.add("ready");
     document.getElementById("pl-"+k).textContent=BADGE[info.status];
+    const est=document.getElementById("est-"+k);
+    if(est){
+      const elapsed=info.elapsed_sec?` · 已用 ${fmtDur(info.elapsed_sec)}`:"";
+      est.textContent=`预计 ${fmtDur(info.estimate_sec||0)}${elapsed}`;
+    }
     const rb=document.getElementById("rb-"+k);
     if(rb)rb.disabled=!!ST.running||!prevDone;
+    const rr=document.getElementById("rr-"+k);
+    if(rr)rr.disabled=!!ST.running||!prevDone;
     const running=(k===ST.current&&ST.running);
     // 进度环 + 头条
     const pc = running?info.progress : (info.status==="done"?100:info.progress);
@@ -381,17 +620,16 @@ function apply(){
       const nb=ST.steps[STEPS[i+1].key].status;
       if(info.status==="done"&&nb==="done")sc.classList.add("done");
       else if(info.status==="done"&&(nb==="running"||nb==="pending"))sc.classList.add("flow");}
-    // 完成 → 预览
-    if(info.status==="done"&&prev[k]!=="done")loadPreview(k);
+    if(info.status==="done")document.getElementById("ptg-"+k).classList.remove("hide");
     prev[k]=info.status;
   });
 }
 
 // ---------- 预览 ----------
-async function loadPreview(key){
+async function loadPreview(key, open=false){
   const pv=document.getElementById("pv-"+key);if(!pv)return;
   document.getElementById("ptg-"+key).classList.remove("hide");
-  pvOpen.add(key);syncPv(key);
+  if(open){pvOpen.add(key);syncPv(key);}
   if(key==="download")
     pv.innerHTML=`<div class="ptitle">下载完成</div>`+(ST.has_video?`<video controls src="${API}/api/jobs/${JOB}/source.mp4"></video>`:`<div class="hint">仅音频模式，无视频画面。</div>`);
   else if(key==="asr"){const d=await (await fetch(`${API}/api/jobs/${JOB}/transcript`)).json();
@@ -408,14 +646,13 @@ async function loadPreview(key){
       <a class="dl alt" href="${API}/api/jobs/${JOB}/cover.png" download>⬇ 下载封面</a>
       <a class="dl alt" href="${API}/api/jobs/${JOB}/sub?fmt=srt">⬇ 下载字幕</a></div>`;
   else if(key==="publish"){const m=await (await fetch(`${API}/api/jobs/${JOB}/metadata`)).json();
-    const up=m.uploaded?`<div class="hint">已提交到 B站：${esc(JSON.stringify(m.upload_result||{}))}</div>`:"";
-    pv.innerHTML=`<div class="ptitle">B站 投稿信息${m.uploaded?"（已自动投稿）":"（可复制后手动投稿）"}</div>
+    pv.innerHTML=`<div class="ptitle">保存信息（已保存到 output）</div>
       <label>标题</label><input type="text" value="${(m.title||"").replace(/"/g,"&quot;")}">
       <label>简介</label><textarea>${esc(m.desc)}</textarea>
       <label>标签</label><div class="tags">${(m.tags||[]).map(t=>`<span class="tag">${esc(t)}</span>`).join("")}</div>
       <label>建议分区</label><input type="text" value="${esc(m.partition)} / TID ${esc(String(m.tid||""))}" style="max-width:420px">
       ${m.cover?`<label>封面</label><img class="cover" src="${API}/api/jobs/${JOB}/cover.png?t=${Date.now()}">`:""}
-      ${up}
+      ${m.archive_dir?`<label>归档目录</label><input type="text" value="${esc(m.archive_dir).replace(/"/g,"&quot;")}">`:""}
       <div><a class="dl" href="${API}/api/jobs/${JOB}/video.mp4?download=true">⬇ 下载成片</a></div>`;}
 }
 
@@ -423,31 +660,6 @@ async function loadCues(){const box=document.getElementById("cue-prev");
   const d=await (await fetch(`${API}/api/jobs/${JOB}/cues`)).json();
   if(!d.cues.length){box.innerHTML='<div class="hint">暂无字幕，请先完成配音。</div>';return;}
   box.innerHTML=`<div class="list" style="margin-top:10px">${d.cues.map(c=>`<div class="cue"><span class="tc">${fmt(c.start)}→${fmt(c.end)}</span><span>${esc(c.zh)}</span></div>`).join("")}</div>`;}
-
-async function biliLogin(ev){
-  const btn=ev.target, box=document.getElementById("bili-login-box"), st=document.getElementById("bili-login-status");
-  btn.disabled=true;btn.textContent="生成二维码…";
-  try{
-    const r=await fetch(`${API}/api/bilibili/login/start`,{method:"POST"});
-    if(!r.ok)throw new Error((await r.json().catch(()=>({}))).detail||"生成二维码失败");
-    const d=await r.json();
-    box.innerHTML=`<div class="ptitle" style="margin-top:12px">用 B站 App 扫码登录</div>
-      <img class="cover" style="max-width:220px;background:#fff;padding:10px" src="${API}${d.qr}?t=${Date.now()}">`;
-    st.textContent="等待扫码确认…";
-    const timer=setInterval(async()=>{
-      try{
-        const s=await (await fetch(`${API}/api/bilibili/login/${d.sid}/state`)).json();
-        st.textContent=s.message||s.status;
-        if(s.status==="done"||s.status==="error"){
-          clearInterval(timer);btn.disabled=false;btn.textContent="扫码登录 B站";
-          if(s.status==="done")box.innerHTML=`<div class="hint">登录成功，之后可直接选择「自动投稿到 B站」。</div>`;
-        }
-      }catch(e){clearInterval(timer);btn.disabled=false;btn.textContent="扫码登录 B站";}
-    },1500);
-  }catch(e){
-    st.textContent=e.message||"登录失败";btn.disabled=false;btn.textContent="扫码登录 B站";
-  }
-}
 
 async function sample(ev){const v=document.getElementById("tts-voice").value;
   const fd=new FormData();fd.append("voice",v);fd.append("text","我们从小被教育，爱是神圣的。但真正困住我们的，往往不是生活本身，而是对结果的执念。");
