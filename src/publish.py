@@ -19,6 +19,8 @@ import requests
 from . import config
 from .utils import load_json, log, save_json
 
+_FONT_BOLD = r"C:\Windows\Fonts\msyhbd.ttc"
+
 _SYS = (
     "你是中文短视频运营。根据给定的中文视频文案，生成适合平台保存/发布时使用的信息。"
     "只输出 JSON：{\"title\":\"不超过80字的吸引人标题\","
@@ -180,6 +182,84 @@ def _write_archive_files(archive_dir: Path, meta: dict) -> None:
     (archive_dir / "publish_info.md").write_text("\n".join(info), encoding="utf-8")
 
 
+def _cover_font(size: int):
+    from PIL import ImageFont
+
+    size = max(48, min(260, int(size or 132)))
+    try:
+        return ImageFont.truetype(_FONT_BOLD, size)
+    except OSError:
+        return ImageFont.load_default()
+
+
+def _wrap_title(draw, title: str, font, max_w: int, max_lines: int = 3) -> list[str]:
+    title = (title or "").strip().replace("，", " ").replace(",", " ")
+    if not title:
+        return []
+    lines: list[str] = []
+    for part in [x.strip() for x in title.splitlines() if x.strip()] or [title]:
+        cur = ""
+        for ch in part:
+            trial = cur + ch
+            if cur and draw.textlength(trial, font=font) > max_w:
+                lines.append(cur)
+                cur = ch
+            else:
+                cur = trial
+        if cur:
+            lines.append(cur)
+    if len(lines) > max_lines:
+        lines = lines[:max_lines - 1] + ["".join(lines[max_lines - 1:])]
+    return lines[:max_lines]
+
+
+def make_cover_from_image(src: Path, out_png: Path, title: str, *,
+                          x: float = 0.07, y: float = 0.10,
+                          font_size: int = 132, box_width: float = 0.62) -> Path:
+    """用户上传底图 + 标题叠字，输出 16:9 封面。坐标/宽度为 0~1 归一化值。"""
+    from PIL import Image, ImageDraw
+
+    img = Image.open(src).convert("RGB")
+    target_w, target_h = 1920, 1080
+    scale = max(target_w / img.width, target_h / img.height)
+    nw, nh = int(img.width * scale), int(img.height * scale)
+    img = img.resize((nw, nh), Image.LANCZOS)
+    left = max(0, (nw - target_w) // 2)
+    top = max(0, (nh - target_h) // 2)
+    img = img.crop((left, top, left + target_w, top + target_h)).convert("RGBA")
+
+    overlay = Image.new("RGBA", (target_w, target_h), (0, 0, 0, 0))
+    od = ImageDraw.Draw(overlay, "RGBA")
+    box_w_px = int(target_w * max(0.20, min(0.92, float(box_width or 0.62))))
+    x_px = int(target_w * max(0, min(0.95, float(x or 0))))
+    y_px = int(target_h * max(0, min(0.88, float(y or 0))))
+    pad = max(20, int(font_size * 0.22))
+    od.rounded_rectangle(
+        [max(0, x_px - pad), max(0, y_px - pad),
+         min(target_w, x_px + box_w_px + pad), min(target_h, y_px + int(font_size * 3.7))],
+        radius=22,
+        fill=(0, 0, 0, 92),
+    )
+    img = Image.alpha_composite(img, overlay)
+
+    draw = ImageDraw.Draw(img, "RGBA")
+    font = _cover_font(font_size)
+    lines = _wrap_title(draw, title, font, box_w_px)
+    line_h = int(font.size * 1.08)
+    stroke = max(4, int(font.size * 0.075))
+    colors = [(255, 235, 0), (255, 255, 255), (255, 235, 0)]
+    for i, line in enumerate(lines):
+        yy = y_px + i * line_h
+        draw.text((x_px + stroke, yy + stroke), line, font=font, fill=(0, 0, 0, 170))
+        draw.text((x_px, yy), line, font=font, fill=colors[i % len(colors)],
+                  stroke_width=stroke, stroke_fill=(8, 8, 8))
+
+    out_png.parent.mkdir(parents=True, exist_ok=True)
+    img.convert("RGB").save(out_png)
+    log("archive", f"封面图已生成：{out_png.name}")
+    return out_png
+
+
 def _upload_bilibili(meta: dict, *, final_video: Path, cover: Path | None,
                      tid: int, copyright: int) -> dict:
     cookie_file = Path(config.BILIBILI_COOKIE_FILE)
@@ -259,7 +339,13 @@ def _upload_bilibili(meta: dict, *, final_video: Path, cover: Path | None,
 def prepare(*, work_dir: Path, final_video: Path, platform: str = "bilibili",
             mode: str = "prepare", tid: int | None = None,
             copyright: int | None = None,
-            archive_dir: Path | str | None = None) -> dict:
+            archive_dir: Path | str | None = None,
+            cover_image: Path | str | None = None,
+            cover_title: str = "",
+            cover_x: float = 0.07,
+            cover_y: float = 0.10,
+            cover_font_size: int = 132,
+            cover_width: float = 0.62) -> dict:
     """生成保存信息包并归档，返回 metadata dict。"""
     translated = load_json(work_dir / "translated.json") or []
     full_text = "".join(s.get("zh", "") for s in translated)[:4000]
@@ -270,6 +356,7 @@ def prepare(*, work_dir: Path, final_video: Path, platform: str = "bilibili",
 
     log("archive", f"生成保存信息…")
     raw_meta = _gen_metadata(full_text)
+    short_cover_title = (cover_title or "").strip() or gen_title(full_text)
 
     project_title = _project_title_from_meta(raw_meta, full_text)
     theme = _theme_from_meta(raw_meta, full_text)
@@ -295,7 +382,19 @@ def prepare(*, work_dir: Path, final_video: Path, platform: str = "bilibili",
     video_dst = archive_dir / "video.mp4"
     shutil.copy(final_video, video_dst)
 
-    cover = work_dir / "cover.png"
+    uploaded_cover = Path(cover_image) if cover_image else None
+    if uploaded_cover and uploaded_cover.exists():
+        cover = make_cover_from_image(
+            uploaded_cover,
+            work_dir / "cover.png",
+            short_cover_title,
+            x=float(cover_x or 0.07),
+            y=float(cover_y or 0.10),
+            font_size=int(cover_font_size or 132),
+            box_width=float(cover_width or 0.62),
+        )
+    else:
+        cover = work_dir / "cover.png"
     cover_dst = archive_dir / "cover.png"
     if cover.exists():
         shutil.copy(cover, cover_dst)
@@ -311,6 +410,13 @@ def prepare(*, work_dir: Path, final_video: Path, platform: str = "bilibili",
         "tags": raw_meta.get("tags", [])[:10],
         "partition": raw_meta.get("partition", ""),
         "project_title": project_title,
+        "cover_title": short_cover_title,
+        "cover_layout": {
+            "x": float(cover_x or 0.07),
+            "y": float(cover_y or 0.10),
+            "font_size": int(cover_font_size or 132),
+            "width": float(cover_width or 0.62),
+        },
         "tid": selected_tid,
         "copyright": selected_copyright,
         "theme": theme,

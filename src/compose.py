@@ -235,12 +235,10 @@ def image_to_video(image: Path, audio: Path, ass: Path | None, out_path: Path) -
 def compose(*, mode: str, work_dir: Path, audio: Path, ass: Path | None,
             out_path: Path, title: str = "", bg: str = "#10131a",
             bg2: str | None = "#1d2740", image: Path | None = None) -> Path:
-    """统一入口。mode: original | image。合成同时总会输出一张可上传封面 cover.png。"""
+    """统一入口。mode: original | image。封面生成由第 6 步归档负责。"""
     cover_png = work_dir / "cover.png"
     if mode == "image":
         cover = image or make_cover(title, cover_png, bg=bg, bg2=bg2)
         return image_to_video(cover, audio, ass, out_path)
     # original：复用 mux（原视频 + 配音 + 烧字幕，-shortest 截断）
-    result = mux.mux(work_dir / "source.mp4", audio, ass, out_path)
-    cover_from_frame(work_dir / "source.mp4", title, cover_png)  # 额外产出封面
-    return result
+    return mux.mux(work_dir / "source.mp4", audio, ass, out_path)

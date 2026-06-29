@@ -1,7 +1,7 @@
 """TTS 引擎：Google Gemini TTS（云端·可控情感，REST generateContent）。
 
 逐段调用 Gemini 语音模型（输出 24kHz 16-bit 单声道 PCM），顺序拼接成整条音轨。
-通过自然语言指令控制语气（GEMINI_TTS_STYLE），语速用 librosa 变调保音高处理。
+通过自然语言指令控制语气（GEMINI_TTS_STYLE），语速用 ffmpeg atempo 处理。
 需在 .env 配置 GEMINI_API_KEY（或 GOOGLE_API_KEY）。
 """
 from __future__ import annotations
@@ -9,6 +9,7 @@ from __future__ import annotations
 import base64
 import json
 import re
+import subprocess
 import time
 import urllib.request
 import urllib.error
@@ -18,7 +19,7 @@ import numpy as np
 import soundfile as sf
 
 from . import config
-from .utils import load_json, log, save_json
+from .utils import _NO_WINDOW, load_json, log, save_json
 
 # 显示名 -> Gemini 预置音色。Gemini 官方不标性别，以下为社区实测偏「男声」的全部音色，
 # 多语言、自动识别中文。★ = 偏适合灵性/哲学/疗愈赛道（低沉、亲密、沉静）的声音，建议优先试听。
@@ -74,13 +75,27 @@ def _price_per_million() -> tuple[float, float]:
     return _PRICE["gemini-2.5-flash"]
 
 
-def _log_cost(prefix: str) -> None:
+def _usage_cost() -> dict:
     pin, pout = _price_per_million()
     usd = _usage["in"] / 1e6 * pin + _usage["out"] / 1e6 * pout
     cny = usd * config.USD_TO_CNY
     total = _usage["total"] or (_usage["in"] + _usage["out"])
-    log("tts", f"{prefix}：输入 {_usage['in']} + 输出(音频) {_usage['out']} = {total} tokens，"
-               f"约 ${usd:.4f}（≈¥{cny:.3f}，估算）")
+    return {
+        "engine": "gemini",
+        "model": _model_name(),
+        "input_tokens": _usage["in"],
+        "audio_tokens": _usage["out"],
+        "total_tokens": total,
+        "usd": round(usd, 6),
+        "cny": round(cny, 4),
+    }
+
+
+def _log_cost(prefix: str) -> dict:
+    cost = _usage_cost()
+    log("tts", f"{prefix}：输入 {_usage['in']} + 输出(音频) {_usage['out']} = {cost['total_tokens']} tokens，"
+               f"约 ${cost['usd']:.4f}（≈¥{cost['cny']:.3f}，估算）")
+    return cost
 
 
 def _api_key() -> str:
@@ -109,45 +124,10 @@ def _sanitize_style(s: str) -> str:
 
 def _prompt_text(text: str) -> str:
     style = _sanitize_style(config.GEMINI_TTS_STYLE or "")
-    return f"{style}：{text}" if style else text
-
-
-_STYLE_SYS = (
-    "你是为「心灵觉醒 / 灵性哲学」中文有声频道（荣格心理学、纳瓦尔）服务的配音导演。"
-    "阅读给定中文文稿后，写一条给 Google Gemini-TTS 的『风格提示』(style prompt)，"
-    "用来控制朗读的人设、语气、情感、语速与停顿。严格遵守 Gemini-TTS 官方写法：\n"
-    "①必须以『用…的语气讲述/朗读下面这段文字』这类措辞开头，明确是朗读给定文本、而不是生成新内容；\n"
-    "②具体描述：说话人设（如深夜电台里睿智温柔的引路人）、整体语气与情感、语速偏慢、"
-    "在关键处自然的停顿与呼吸；可在描述里点明哪里该停顿放缓；\n"
-    "③要贴合本篇文稿真实的情绪起伏，不要泛泛而谈；\n"
-    "④一句话，40~90字，中文；不要使用任何引号、书名号；只输出这条提示本身，不要解释。"
-)
-
-
-def gen_style(full_text: str) -> str:
-    """用 DeepSeek 按文稿内容生成贴合的 Gemini 语气/情感指令；失败则回退到默认风格。"""
-    import requests
-
-    fallback = (config.GEMINI_TTS_STYLE or "用温暖、沉稳、富有疗愈感的语气朗读").strip()
-    if not config.DEEPSEEK_API_KEY or not (full_text or "").strip():
-        return fallback
-    try:
-        resp = requests.post(
-            f"{config.DEEPSEEK_BASE_URL}/chat/completions",
-            headers={"Authorization": f"Bearer {config.DEEPSEEK_API_KEY}",
-                     "Content-Type": "application/json"},
-            json={"model": config.DEEPSEEK_MODEL,
-                  "messages": [{"role": "system", "content": _STYLE_SYS},
-                               {"role": "user", "content": full_text[:3000]}],
-                  "temperature": 1.0, "stream": False},
-            timeout=60,
-        )
-        resp.raise_for_status()
-        t = resp.json()["choices"][0]["message"]["content"].strip().splitlines()[0]
-        return (_sanitize_style(t) or _sanitize_style(fallback))[:80]
-    except Exception as e:
-        log("tts", f"DeepSeek 生成语气失败，回退默认风格（{str(e)[:80]}）")
-        return fallback
+    anchor = "全程保持同一个说话人、同一音色、同一年龄感和同一麦克风距离，不要在不同段落间改变声线"
+    if style:
+        return f"{anchor}；{style}：{text}"
+    return f"{anchor}：{text}"
 
 
 def _rate_from_mime(mime: str) -> int:
@@ -176,7 +156,7 @@ def _request_audio(url: str, text: str, use_style: bool) -> tuple[np.ndarray | N
     body = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(url, data=body, method="POST",
                                  headers={"Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=60) as resp:
+    with urllib.request.urlopen(req, timeout=max(60, int(getattr(config, "GEMINI_TTS_TIMEOUT", 180)))) as resp:
         data = json.loads(resp.read().decode("utf-8"))
     cand = (data.get("candidates") or [{}])[0]
     parts = (cand.get("content") or {}).get("parts") or []
@@ -189,8 +169,8 @@ def _request_audio(url: str, text: str, use_style: bool) -> tuple[np.ndarray | N
     sr = _rate_from_mime(inline.get("mimeType", ""))
     wav = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
     peak = float(np.max(np.abs(wav))) if wav.size else 0.0
-    if peak > 0:
-        wav = wav * (0.95 / peak)
+    if peak > 0.98:
+        wav = wav * (0.98 / peak)
     return wav, sr, "ok"
 
 
@@ -237,8 +217,9 @@ def _weight(text: str) -> float:
     return max(1.0, content + punctuation * 2.5)
 
 
-def _chunk_segments(segments: list[dict], max_chars: int = 240) -> list[list[dict]]:
+def _chunk_segments(segments: list[dict], max_chars: int | None = None) -> list[list[dict]]:
     """把相邻段落合并成不超过 max_chars 字的块，一个块一个 Gemini 请求。"""
+    max_chars = max(120, int(max_chars or getattr(config, "GEMINI_TTS_MAX_CHARS", 800)))
     chunks: list[list[dict]] = []
     cur: list[dict] = []
     cur_len = 0
@@ -256,20 +237,62 @@ def _chunk_segments(segments: list[dict], max_chars: int = 240) -> list[list[dic
     return chunks
 
 
-def _apply_speed(wav: np.ndarray, speed: float) -> np.ndarray:
-    if abs(speed - 1.0) < 0.01 or wav.size < 16:
+def _normalize_clip(wav: np.ndarray) -> np.ndarray:
+    """按有效人声 RMS 做温和归一，降低分块之间的响度和距离感差异。"""
+    target = max(0.02, min(0.20, float(getattr(config, "GEMINI_TTS_TARGET_RMS", 0.075))))
+    if wav.size == 0:
         return wav
-    import librosa
-    return librosa.effects.time_stretch(wav, rate=speed).astype(np.float32)
+    active = wav[np.abs(wav) > 0.006]
+    if active.size < max(200, wav.size // 50):
+        active = wav
+    rms = float(np.sqrt(np.mean(active * active))) if active.size else 0.0
+    if rms <= 1e-6:
+        return wav
+    gain = max(0.55, min(1.8, target / rms))
+    out = wav * gain
+    peak = float(np.max(np.abs(out))) if out.size else 0.0
+    if peak > 0.98:
+        out = out * (0.98 / peak)
+    return out.astype(np.float32, copy=False)
+
+
+def _atempo_filter(speed: float) -> str:
+    if speed <= 0:
+        raise ValueError("TTS_SPEED 必须大于 0")
+    factors: list[float] = []
+    remaining = speed
+    while remaining > 2.0:
+        factors.append(2.0)
+        remaining /= 2.0
+    while remaining < 0.5:
+        factors.append(0.5)
+        remaining /= 0.5
+    factors.append(remaining)
+    return ",".join(f"atempo={factor:.6g}" for factor in factors)
+
+
+def _apply_speed_file(path: Path, speed: float) -> None:
+    if abs(speed - 1.0) < 0.01:
+        return
+    temp = path.with_name(f"{path.stem}.speedtmp{path.suffix}")
+    proc = subprocess.run(
+        [config.FFMPEG, "-y", "-i", str(path), "-filter:a", _atempo_filter(speed), str(temp)],
+        capture_output=True,
+        text=True,
+        creationflags=_NO_WINDOW,
+    )
+    if proc.returncode != 0:
+        raise RuntimeError(f"Gemini TTS 语速处理失败：{(proc.stderr or '')[-1200:]}")
+    temp.replace(path)
 
 
 def sample(text: str, out_path: Path) -> Path:
     _reset_usage()
     wav, sr = _synth_one(text[:120] or "你好，这是配音音色试听。")
     _log_cost("试听用量")
-    wav = _apply_speed(wav, max(float(config.TTS_SPEED), 0.1))
     out_path.parent.mkdir(parents=True, exist_ok=True)
     sf.write(out_path, wav, sr)
+    _apply_speed_file(out_path, max(float(config.TTS_SPEED), 0.1))
     log("tts", f"试听音频已生成：{out_path.name}")
     return out_path
 
@@ -281,18 +304,6 @@ def synthesize(segments: list[dict], work_dir: Path, total_duration: float = 0.0
     if out_path.exists() and seg_cache.exists():
         log("tts", "复用已有配音音轨")
         return out_path, load_json(seg_cache)
-
-    # 按内容自动生成语气：让 DeepSeek 读全文后产出贴合的 Gemini 语气指令（每个任务算一次并缓存）
-    if config.GEMINI_TTS_AUTO_STYLE:
-        style_cache = work_dir / "gemini_style.txt"
-        if style_cache.exists():
-            style = style_cache.read_text(encoding="utf-8").strip()
-        else:
-            full = "".join((s.get("zh") or "").strip() for s in segments)
-            style = gen_style(full)
-            style_cache.write_text(style, encoding="utf-8")
-        config.GEMINI_TTS_STYLE = style
-        log("tts", f"本片语气指令：{style}")
 
     _reset_usage()
     speed = max(float(config.TTS_SPEED), 0.1)
@@ -307,18 +318,19 @@ def synthesize(segments: list[dict], work_dir: Path, total_duration: float = 0.0
     if not chunks:
         raise RuntimeError("没有可合成的中文文本")
     log("tts", f"使用 Gemini TTS / {_voice_id()}（{config.GEMINI_TTS_MODEL}）合成配音，"
-               f"共 {sum(len(c) for c in chunks)} 段 → {len(chunks)} 个请求")
+               f"共 {sum(len(c) for c in chunks)} 段 → {len(chunks)} 个请求，"
+               f"每批最多 {config.GEMINI_TTS_MAX_CHARS} 字，启用稳定声线提示")
 
     for ci, chunk in enumerate(chunks, 1):
         text = "".join((s.get("zh") or "").strip() for s in chunk)
         wav, sr = _synth_one(text)
-        wav = _apply_speed(wav, speed)
         if sr_ref is None:
             sr_ref = sr
         elif sr != sr_ref:
             import librosa
             wav = librosa.resample(wav, orig_sr=sr, target_sr=sr_ref)
             sr = sr_ref
+        wav = _normalize_clip(wav)
         chunk_dur = len(wav) / sr
 
         # 块内各段按字数权重分配时长（与 Qwen 引擎一致），保证字幕与配音对齐
@@ -347,7 +359,18 @@ def synthesize(segments: list[dict], work_dir: Path, total_duration: float = 0.0
     if peak > 1.0:
         master = master / peak * 0.97
     sf.write(out_path, master, sr_final)
+    _apply_speed_file(out_path, speed)
+    if abs(speed - 1.0) >= 0.01:
+        retimed = [
+            {
+                **seg,
+                "start": round(seg["start"] / speed, 3),
+                "end": round(seg["end"] / speed, 3),
+            }
+            for seg in retimed
+        ]
     save_json(seg_cache, retimed)
-    _log_cost("本片 Gemini 用量")
+    cost = _log_cost("本片 Gemini 用量")
+    save_json(work_dir / "gemini_tts_usage.json", cost)
     log("tts", f"配音音轨完成：{out_path.name}（时长 {cursor:.0f}s）")
     return out_path, retimed

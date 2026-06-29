@@ -123,8 +123,8 @@ WHISPER_DEVICE = os.environ.get("WHISPER_DEVICE", "cuda")
 WHISPER_COMPUTE_TYPE = os.environ.get("WHISPER_COMPUTE_TYPE", "float16")
 
 # ---------------------------------------------------------------- TTS
-TTS_ENGINE = os.environ.get("TTS_ENGINE", "qwen3")
-TTS_VOICE = os.environ.get("TTS_VOICE", "ryan")
+TTS_ENGINE = os.environ.get("TTS_ENGINE", "gemini")
+TTS_VOICE = os.environ.get("TTS_VOICE", "Umbriel·从容随和")
 TTS_SPEED = float(os.environ.get("TTS_SPEED", "1.15"))  # 配音语速，0.7~1.3 微调
 # 段间停顿（秒）：顺序拼接配音时，每段之间保留的停顿（默认即可，无需在界面调）。
 TTS_GAP_MIN = float(os.environ.get("TTS_GAP_MIN", "0.08"))
@@ -181,8 +181,9 @@ GEMINI_TTS_MODEL = os.environ.get("GEMINI_TTS_MODEL", "gemini-2.5-pro-preview-tt
 # 自然语言风格指令（会拼到正文前引导语气）；留空则不加引导。
 GEMINI_TTS_STYLE = os.environ.get(
     "GEMINI_TTS_STYLE", "用温暖、沉稳、富有疗愈感的语气朗读")
-# 自动语气：用 DeepSeek 读全文后，按 Gemini 官方风格提示生成贴合内容的语气/情感指令（更真实）。
-GEMINI_TTS_AUTO_STYLE = os.environ.get("GEMINI_TTS_AUTO_STYLE", "1") == "1"
+GEMINI_TTS_MAX_CHARS = int(os.environ.get("GEMINI_TTS_MAX_CHARS", "800"))
+GEMINI_TTS_TARGET_RMS = float(os.environ.get("GEMINI_TTS_TARGET_RMS", "0.075"))
+GEMINI_TTS_TIMEOUT = int(os.environ.get("GEMINI_TTS_TIMEOUT", "180"))
 # 计费估算（美元/百万 token）：用于在日志里估算花费。官方价可能调整，可用 .env 覆盖。
 GEMINI_PRICE_IN = float(os.environ.get("GEMINI_PRICE_IN", "0"))    # 0=按模型默认表
 GEMINI_PRICE_OUT = float(os.environ.get("GEMINI_PRICE_OUT", "0"))

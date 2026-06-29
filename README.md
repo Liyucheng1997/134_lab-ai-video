@@ -76,21 +76,21 @@ powershell -ExecutionPolicy Bypass -File .\run.ps1 "URL" --voice 沉稳男声 --
 
 | 参数 | 说明 |
 |------|------|
-| `--voice` | Qwen3-TTS 音色：默认 `ryan`，也可用 `aiden` / `dylan` / `eric` / `serena` 等 |
+| `--voice` | 配音音色：默认 Gemini TTS 的 `Umbriel·从容随和`，也可在界面第 4 步切换引擎和音色 |
 | `--whisper` | ASR 模型：`small`（默认，离线）/ `large-v3-turbo`（更准） |
 | `--lang` | 源语言代码，留空自动检测（en/ja/ko…） |
 | `--out` | 自定义输出路径 |
 
-Qwen3-TTS 配置可在 `.env` 里覆盖：`TTS_VOICE=ryan`、`TTS_SPEED=1.15`、`QWEN_TTS_MODEL=Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice`。
+配音默认使用 Gemini TTS，可在 `.env` 里覆盖：`TTS_ENGINE=gemini`、`TTS_VOICE=Umbriel·从容随和`、`TTS_SPEED=1.15`。Gemini 需配置 `GEMINI_API_KEY`。
 
 ### 配音引擎（可在界面第 4 步切换）
 
 | 引擎 | 类型 | 自然度 | 说明 / 启用方式 |
 |---|---|---|---|
-| **Qwen3-TTS** | 本地 | ★★☆ | 默认，开箱即用，稳定 |
+| **Qwen3-TTS** | 本地 | ★★☆ | 开箱即用，稳定 |
 | **F5-TTS** | 本地 | ★★☆ | 音色克隆，需 `pip install f5-tts`；可用 `TTS_REF_AUDIO/TEXT` 克隆指定声音 |
 | **Azure TTS** | 云端 | ★★★★ | 最稳、性价比高；`.env` 填 `AZURE_SPEECH_KEY`、`AZURE_SPEECH_REGION`，可设 `AZURE_TTS_STYLE=calm` |
-| **Gemini TTS** | 云端 | ★★★★ | 自然语言控情感；`.env` 填 `GEMINI_API_KEY`（aistudio.google.com/apikey），可设 `GEMINI_TTS_STYLE` |
+| **Gemini TTS** | 云端 | ★★★★ | 默认引擎；`.env` 填 `GEMINI_API_KEY`（aistudio.google.com/apikey），可设 `GEMINI_TTS_STYLE` / `GEMINI_TTS_MAX_CHARS` |
 | **CosyVoice2** | 本地 | ★★★★ | 阿里开源，情感指令；`git clone CosyVoice` 并下载 `CosyVoice2-0.5B`，设置 `COSYVOICE_REPO_DIR/MODEL_DIR` |
 
 界面会自动检测每个引擎是否就绪：未安装/未配置的引擎在下拉框中置灰并给出提示。各引擎参数见 `.env.example`。

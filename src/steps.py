@@ -5,6 +5,9 @@
 from __future__ import annotations
 
 import json
+import os
+import time
+import uuid
 from pathlib import Path
 
 from . import (compose as compose_mod, config, download, publish as publish_mod,
@@ -55,9 +58,21 @@ def _register_output_project(job_id: str, archive_dir: str | Path) -> None:
     except Exception:
         data = {}
     data[job_id] = {"project_dir": str(project), "cache_dir": str(cache)}
-    tmp = map_file.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-    tmp.replace(map_file)
+    payload = json.dumps(data, ensure_ascii=False, indent=2)
+    last_error: Exception | None = None
+    for attempt in range(8):
+        tmp = map_file.with_name(f"{map_file.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
+        try:
+            tmp.write_text(payload, encoding="utf-8")
+            os.replace(tmp, map_file)
+            return
+        except PermissionError as e:
+            last_error = e
+            time.sleep(0.05 * (attempt + 1))
+        finally:
+            tmp.unlink(missing_ok=True)
+    if last_error:
+        raise last_error
 
 
 # ----------------------------------------------------------------- 1) 下载/导入
@@ -132,7 +147,11 @@ def run_tts(job_id: str, cfg: dict) -> dict:
         for f in ("dub.wav", "dub_segments.json"):
             (wd / f).unlink(missing_ok=True)
     _, retimed = tts.synthesize(segs, wd)
-    return {"count": len(retimed), "duration": retimed[-1]["end"] if retimed else 0}
+    result = {"count": len(retimed), "duration": retimed[-1]["end"] if retimed else 0}
+    gemini_cost = load_json(wd / "gemini_tts_usage.json")
+    if gemini_cost:
+        result["gemini_cost"] = gemini_cost
+    return result
 
 
 # ----------------------------------------------------------------- 5) 合成
@@ -141,16 +160,18 @@ def run_compose(job_id: str, cfg: dict) -> dict:
     segs = load_json(wd / "dub_segments.json") or load_json(wd / "translated.json")
     bilingual = bool(cfg.get("bilingual", False))
     presets = {p["key"]: p for p in config.SUB_PRESETS}
-    style = presets.get(cfg.get("preset", config.SUB_PRESET), presets["classic"])
-    log("compose", f"字幕样式：{style['name']}")
+    style = dict(presets.get(cfg.get("preset", config.SUB_PRESET), presets["classic"]))
+    try:
+        fontsize = int(cfg.get("fontsize") or 0)
+        if 24 <= fontsize <= 140:
+            style["fontsize"] = fontsize
+    except (TypeError, ValueError):
+        pass
+    if cfg.get("position") in ("bottom", "middle", "top"):
+        style["position"] = cfg["position"]
+    log("compose", f"字幕样式：{style['name']}，字号 {style['fontsize']}，位置 {style['position']}")
     subtitles.build(segs, wd, bilingual=bilingual, style=style)
     ass = wd / "subs.ass"
-
-    # 封面标题由 DeepSeek 自动生成（取译文全文），并缓存供发布步骤复用
-    full = "".join(s.get("zh", "") for s in segs)
-    title = publish_mod.gen_title(full)
-    (wd / "cover_title.txt").write_text(title, encoding="utf-8")
-    log("compose", f"封面标题：{title}")
 
     mode = cfg.get("mode", "original")
     if mode == "original" and not (wd / "source.mp4").exists():
@@ -161,9 +182,9 @@ def run_compose(job_id: str, cfg: dict) -> dict:
     compose_mod.compose(
         mode=mode, work_dir=wd, audio=wd / "dub.wav",
         ass=(ass if cfg.get("burn", True) else None), out_path=out,
-        title=title, bg=cfg.get("bg", "#10131a"), bg2=cfg.get("bg2", "#1d2740"),
+        title="", bg=cfg.get("bg", "#10131a"), bg2=cfg.get("bg2", "#1d2740"),
     )
-    return {"mode": mode, "output": str(out), "title": title}
+    return {"mode": mode, "output": str(out)}
 
 
 # ----------------------------------------------------------------- 6) 保存信息归档
@@ -176,6 +197,12 @@ def run_publish(job_id: str, cfg: dict) -> dict:
         tid=cfg.get("tid"),
         copyright=cfg.get("copyright"),
         archive_dir=cfg.get("archive_dir"),
+        cover_image=cfg.get("file") or cfg.get("cover_image"),
+        cover_title=cfg.get("cover_title", ""),
+        cover_x=cfg.get("cover_x", 0.07),
+        cover_y=cfg.get("cover_y", 0.10),
+        cover_font_size=cfg.get("cover_font_size", 132),
+        cover_width=cfg.get("cover_width", 0.62),
     )
     if meta.get("archive_dir"):
         _register_output_project(job_id, meta["archive_dir"])

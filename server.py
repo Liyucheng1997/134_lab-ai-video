@@ -33,6 +33,7 @@ UPLOAD_DIR = config.WORK_DIR / "_uploads"
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 QUEUE_STATE_FILE = config.OUTPUT_DIR / "_queue_state.json"
 JOB_DIRS_FILE = config.OUTPUT_DIR / "_job_dirs.json"
+ESTIMATE_CALIBRATION_FILE = config.OUTPUT_DIR / "_estimate_calibration.json"
 
 _JOBS: dict[str, dict] = {}
 _BILI_LOGINS: dict[str, dict] = {}
@@ -41,6 +42,7 @@ _QUEUE_RUNNING = False
 _QUEUE_STOP = False
 _LOCK = threading.Lock()
 _RUN_LOCK = threading.Lock()
+_JOB_DIRS_WRITE_LOCK = threading.Lock()
 _STEP_KEYS = [s["key"] for s in STEP_DEFS]
 _LOG_RE = re.compile(r"^\[[\d:]+\]\s*\[(\w+)\]\s*(.*)$")
 _PCT_RE = re.compile(r"(\d+(?:\.\d+)?)\s*%")
@@ -49,6 +51,23 @@ _QUEUE_ITEM_KEYS = {
     "id", "job_id", "url", "title", "status", "error", "order",
     "duration_sec", "output_dir", "project_dir", "created_at",
     "started_at", "ended_at",
+}
+
+_DEFAULT_SECONDS_PER_SENTENCE = {
+    "download": 0.35,
+    "asr": 0.55,
+    "translate": 0.35,
+    "tts": 4.0,
+    "compose": 0.35,
+    "publish": 0.25,
+}
+_STEP_MIN_ESTIMATE = {
+    "download": 5,
+    "asr": 5,
+    "translate": 4,
+    "tts": 20,
+    "compose": 5,
+    "publish": 4,
 }
 
 
@@ -145,9 +164,24 @@ def _read_job_dirs() -> dict:
 
 
 def _write_job_dirs(data: dict) -> None:
-    tmp = JOB_DIRS_FILE.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-    tmp.replace(JOB_DIRS_FILE)
+    payload = json.dumps(data, ensure_ascii=False, indent=2)
+    last_error: Exception | None = None
+    with _JOB_DIRS_WRITE_LOCK:
+        for attempt in range(8):
+            tmp = JOB_DIRS_FILE.with_name(
+                f"{JOB_DIRS_FILE.name}.{os.getpid()}.{threading.get_ident()}.{uuid.uuid4().hex}.tmp"
+            )
+            try:
+                tmp.write_text(payload, encoding="utf-8")
+                os.replace(tmp, JOB_DIRS_FILE)
+                return
+            except PermissionError as e:
+                last_error = e
+                time.sleep(0.05 * (attempt + 1))
+            finally:
+                tmp.unlink(missing_ok=True)
+    if last_error:
+        raise last_error
 
 
 def _register_job_project(job_id: str, project_dir: str | Path) -> Path:
@@ -394,9 +428,23 @@ def _save_queue_state_unlocked() -> None:
         "updated_at": time.time(),
         "items": [{k: item.get(k) for k in _QUEUE_ITEM_KEYS} for item in _QUEUE],
     }
-    tmp = QUEUE_STATE_FILE.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-    tmp.replace(QUEUE_STATE_FILE)
+    data = json.dumps(payload, ensure_ascii=False, indent=2)
+    last_error: Exception | None = None
+    for attempt in range(8):
+        tmp = QUEUE_STATE_FILE.with_name(
+            f"{QUEUE_STATE_FILE.name}.{os.getpid()}.{threading.get_ident()}.{uuid.uuid4().hex}.tmp"
+        )
+        try:
+            tmp.write_text(data, encoding="utf-8")
+            os.replace(tmp, QUEUE_STATE_FILE)
+            return
+        except PermissionError as e:
+            last_error = e
+            time.sleep(0.05 * (attempt + 1))
+        finally:
+            tmp.unlink(missing_ok=True)
+    if last_error:
+        raise last_error
 
 
 def _save_queue_state() -> None:
@@ -548,6 +596,8 @@ def _run_one(job_id: str, step: str, cfg: dict) -> int:
             j["run"][step]["progress"] = 100
     with _LOCK:
         j["run"][step]["ended_at"] = time.time()
+    if code == 0 and not j["run"][step]["error"] and _artifact_done(job_id, step):
+        _update_estimate_calibration(job_id, step)
     return code
 
 
@@ -711,6 +761,17 @@ def _translated_stats(job_id: str) -> tuple[int, int]:
     return chars, len(data)
 
 
+def _sentence_count(job_id: str) -> int:
+    wd = _work_path(job_id)
+    for name in ("translated.json", "segments.json"):
+        data = load_json(wd / name) or []
+        if isinstance(data, dict):
+            data = data.get("segments", [])
+        if isinstance(data, list) and data:
+            return len(data)
+    return 0
+
+
 def _actual_step_elapsed(job_id: str, key: str) -> int | None:
     run = _job(job_id)["run"].get(key, {})
     if run.get("started_at") and run.get("ended_at"):
@@ -718,21 +779,82 @@ def _actual_step_elapsed(job_id: str, key: str) -> int | None:
     return None
 
 
+def _read_estimate_calibration() -> dict:
+    data = load_json(ESTIMATE_CALIBRATION_FILE) or {}
+    return data if isinstance(data, dict) else {}
+
+
+def _write_estimate_calibration(data: dict) -> None:
+    payload = json.dumps(data, ensure_ascii=False, indent=2)
+    for attempt in range(8):
+        tmp = ESTIMATE_CALIBRATION_FILE.with_name(
+            f"{ESTIMATE_CALIBRATION_FILE.name}.{os.getpid()}.{threading.get_ident()}.{uuid.uuid4().hex}.tmp"
+        )
+        try:
+            tmp.write_text(payload, encoding="utf-8")
+            os.replace(tmp, ESTIMATE_CALIBRATION_FILE)
+            return
+        except PermissionError:
+            time.sleep(0.05 * (attempt + 1))
+        finally:
+            tmp.unlink(missing_ok=True)
+
+
+def _calibrated_seconds_per_sentence() -> dict[str, float]:
+    data = _read_estimate_calibration()
+    steps = data.get("steps") if isinstance(data, dict) else {}
+    rates = dict(_DEFAULT_SECONDS_PER_SENTENCE)
+    if isinstance(steps, dict):
+        for key, value in steps.items():
+            try:
+                rate = float((value or {}).get("seconds_per_sentence"))
+            except (TypeError, ValueError):
+                continue
+            if rate > 0:
+                rates[key] = rate
+    return rates
+
+
+def _update_estimate_calibration(job_id: str, completed_step: str) -> None:
+    sentences = _sentence_count(job_id)
+    if sentences <= 0:
+        return
+    data = _read_estimate_calibration()
+    steps = data.get("steps") if isinstance(data.get("steps"), dict) else {}
+    now = time.time()
+    to_update = [completed_step]
+    if completed_step == "asr":
+        to_update.insert(0, "download")
+    for key in to_update:
+        elapsed = _actual_step_elapsed(job_id, key)
+        if not elapsed or elapsed <= 0:
+            continue
+        steps[key] = {
+            "seconds_per_sentence": round(elapsed / max(sentences, 1), 4),
+            "sentences": sentences,
+            "elapsed_sec": elapsed,
+            "job_id": job_id,
+            "updated_at": now,
+        }
+    data = {"version": 1, "updated_at": now, "steps": steps}
+    _write_estimate_calibration(data)
+
+
 def _step_estimate_seconds(duration: float, job_id: str | None = None) -> dict[str, int]:
     duration = max(float(duration or 0), 30.0)
-    zh_chars, seg_count = _translated_stats(job_id) if job_id else (0, 0)
-    if zh_chars:
-        # Qwen3-TTS实测：87字约69s，151字约136s；取两次结果的中间估计。
-        tts_est = round(max(60, zh_chars * 0.65 + 18))
-    else:
-        # 下载前还没有文案，只能按短视频时长粗估。
-        tts_est = round(max(70, duration * 1.45))
-
+    sentence_count = _sentence_count(job_id) if job_id else 0
+    if sentence_count > 0:
+        rates = _calibrated_seconds_per_sentence()
+        return {
+            key: round(max(_STEP_MIN_ESTIMATE[key], sentence_count * rates.get(key, _DEFAULT_SECONDS_PER_SENTENCE[key])))
+            for key in _STEP_KEYS
+        }
+    # 第 2 步完成前还没有句子数，只能用视频时长粗估。
     return {
         "download": round(max(5, duration * 0.05)),
         "asr": round(max(5, duration * 0.08)),
-        "translate": round(max(4, (seg_count or duration / 5) * 0.35)),
-        "tts": tts_est,
+        "translate": round(max(4, duration / 5 * _DEFAULT_SECONDS_PER_SENTENCE["translate"])),
+        "tts": round(max(70, duration * 1.45)),
         "compose": round(max(5, duration * 0.05)),
         "publish": 4,
     }
@@ -888,7 +1010,10 @@ _load_queue_state()
 # ------------------------------------------------------------------ 路由
 @app.get("/", response_class=HTMLResponse)
 def index():
-    return (WEB_DIR / "index.html").read_text(encoding="utf-8")
+    return HTMLResponse(
+        (WEB_DIR / "index.html").read_text(encoding="utf-8"),
+        headers={"Cache-Control": "no-store, max-age=0"},
+    )
 
 
 @app.get("/api/config")
@@ -1166,7 +1291,8 @@ async def run_step(job_id: str, step: str = Form(...), config_json: str = Form("
 
 @app.post("/api/jobs/{job_id}/run_all")
 async def run_all(job_id: str, configs_json: str = Form("{}"),
-                  file: UploadFile | None = File(default=None)):
+                  file: UploadFile | None = File(default=None),
+                  cover_file: UploadFile | None = File(default=None)):
     if _job(job_id)["running"]:
         raise HTTPException(409, "已有步骤在运行")
     try:
@@ -1175,6 +1301,8 @@ async def run_all(job_id: str, configs_json: str = Form("{}"),
         configs = {}
     if file is not None and file.filename:
         configs.setdefault("download", {})["file"] = _save_upload(job_id, file)
+    if cover_file is not None and cover_file.filename:
+        configs.setdefault("publish", {})["file"] = _save_upload(job_id + ".cover", cover_file)
     threading.Thread(target=_all_thread, args=(job_id, configs), daemon=True).start()
     return {"ok": True}
 
@@ -1279,6 +1407,8 @@ def sub(job_id: str, fmt: str = "srt"):
 
 _SAMPLE_DIR = config.WORK_DIR / "_samples"
 _SAMPLE_DIR.mkdir(parents=True, exist_ok=True)
+for _stale_spec in _SAMPLE_DIR.glob("_spec_*.json"):
+    _stale_spec.unlink(missing_ok=True)
 
 
 # 固定试听文案：试听与"准备全部"用同一句，保证缓存可复用
@@ -1287,10 +1417,43 @@ _PREPARE: dict[str, dict] = {}
 _PREPARE_LOCK = threading.Lock()
 
 
-def _sample_path(engine: str, voice: str, speed: float) -> Path:
-    # 按 引擎+音色+语速 缓存（语速不同音频不同）
-    key = uuid.uuid5(uuid.NAMESPACE_DNS, f"{engine}:{voice}:{speed:.2f}").hex[:12]
+def _sample_path(engine: str, voice: str) -> Path:
+    # 试听音频只按 引擎+音色 缓存；前端用 playbackRate 做倍速试听。
+    key = uuid.uuid5(uuid.NAMESPACE_DNS, f"{engine}:{voice}").hex[:12]
     return _SAMPLE_DIR / f"{key}.wav"
+
+
+def _legacy_sample_paths(engine: str, voice: str) -> list[Path]:
+    # 兼容旧版本缓存：曾经按 引擎+音色+语速 缓存，也曾经只按音色缓存。
+    speeds = [
+        "1.00", f"{float(config.TTS_SPEED):.2f}", "0.75", "0.85", "0.90", "0.95",
+        "1.05", "1.10", "1.15", "1.20", "1.25", "1.30", "1.40", "1.50",
+    ]
+    seen: set[str] = set()
+    paths: list[Path] = []
+    for speed in speeds:
+        token = f"{engine}:{voice}:{speed}"
+        if token in seen:
+            continue
+        seen.add(token)
+        paths.append(_SAMPLE_DIR / f"{uuid.uuid5(uuid.NAMESPACE_DNS, token).hex[:12]}.wav")
+    paths.append(_SAMPLE_DIR / f"{uuid.uuid5(uuid.NAMESPACE_DNS, voice).hex[:10]}.wav")
+    return paths
+
+
+def _existing_sample_path(engine: str, voice: str) -> Path | None:
+    canonical = _sample_path(engine, voice)
+    if canonical.exists():
+        return canonical
+    for legacy in _legacy_sample_paths(engine, voice):
+        if not legacy.exists():
+            continue
+        try:
+            shutil.copy2(legacy, canonical)
+            return canonical
+        except OSError:
+            return legacy
+    return None
 
 
 def _engine_voices(engine: str) -> list[str]:
@@ -1299,14 +1462,22 @@ def _engine_voices(engine: str) -> list[str]:
     return list(info["voices"]) if info else []
 
 
+def _available_sample_engines() -> list[dict]:
+    from src import tts
+    return [
+        e for e in tts.engines_info()
+        if e.get("available") and e.get("voices")
+    ]
+
+
 @app.post("/api/voice-sample")
 def voice_sample(voice: str = Form(...), engine: str = Form(""), speed: float = Form(1.0)):
-    out = _sample_path(engine, voice, speed)
+    out = _existing_sample_path(engine, voice) or _sample_path(engine, voice)
     if not out.exists():
         with _RUN_LOCK:
             if not out.exists():
                 cmd = [sys.executable, "-u", str(config.BASE_DIR / "voice_sample.py"),
-                       "--engine", engine, "--voice", voice, "--speed", str(speed),
+                       "--engine", engine, "--voice", voice, "--speed", "1.0",
                        "--text", _SAMPLE_TEXT, "--out", str(out)]
                 r = subprocess.run(cmd, cwd=str(config.BASE_DIR), capture_output=True, text=True)
                 if r.returncode != 0 or not out.exists():
@@ -1314,13 +1485,13 @@ def voice_sample(voice: str = Form(...), engine: str = Form(""), speed: float = 
     return _serve(out, "audio/wav")
 
 
-def _prepare_worker(engine: str, speed: float, jobs: list[dict], pk: str):
+def _prepare_worker(engine: str, jobs: list[dict], pk: str):
     spec = _SAMPLE_DIR / f"_spec_{uuid.uuid4().hex[:8]}.json"
     spec.write_text(json.dumps(jobs, ensure_ascii=False), encoding="utf-8")
     try:
         with _RUN_LOCK:
             cmd = [sys.executable, "-u", str(config.BASE_DIR / "voice_sample.py"),
-                   "--engine", engine, "--speed", str(speed),
+                   "--engine", engine, "--speed", "1.0",
                    "--text", _SAMPLE_TEXT, "--spec", str(spec)]
             subprocess.run(cmd, cwd=str(config.BASE_DIR), capture_output=True, text=True)
     finally:
@@ -1330,32 +1501,48 @@ def _prepare_worker(engine: str, speed: float, jobs: list[dict], pk: str):
 
 
 @app.post("/api/voice-sample/prepare")
-def prepare_all(payload: dict = Body(...)):
+def prepare_all(payload: dict = Body(default={})):
     engine = (payload.get("engine") or "").strip()
-    speed = round(float(payload.get("speed") or 1.0), 2)
-    voices = _engine_voices(engine)
-    if not voices:
+    engines = [e for e in _available_sample_engines() if not engine or e["key"] == engine]
+    if not engines:
         raise HTTPException(400, "该引擎无可用音色")
-    pk = f"{engine}:{speed:.2f}"
-    jobs = [{"voice": v, "out": str(_sample_path(engine, v, speed))}
-            for v in voices if not _sample_path(engine, v, speed).exists()]
-    with _PREPARE_LOCK:
-        if _PREPARE.get(pk, {}).get("running"):
-            return {"total": len(voices), "running": True}
-        _PREPARE[pk] = {"running": bool(jobs)}
-    if jobs:
-        threading.Thread(target=_prepare_worker, args=(engine, speed, jobs, pk), daemon=True).start()
-    return {"total": len(voices), "running": bool(jobs)}
+    total = 0
+    running = False
+    for info in engines:
+        key = info["key"]
+        voices = list(info.get("voices") or [])
+        total += len(voices)
+        jobs = [{"voice": v, "out": str(_sample_path(key, v))}
+                for v in voices if _existing_sample_path(key, v) is None]
+        with _PREPARE_LOCK:
+            if _PREPARE.get(key, {}).get("running"):
+                running = True
+                continue
+            _PREPARE[key] = {"running": bool(jobs)}
+        if jobs:
+            running = True
+            threading.Thread(target=_prepare_worker, args=(key, jobs, key), daemon=True).start()
+    return {"total": total, "running": running}
 
 
 @app.get("/api/voice-sample/prepare-status")
-def prepare_status(engine: str, speed: float = 1.0):
-    speed = round(float(speed), 2)
-    voices = _engine_voices(engine)
-    ready = [v for v in voices if _sample_path(engine, v, speed).exists()]
+def prepare_status(engine: str = ""):
+    engine = (engine or "").strip()
+    engines = [e for e in _available_sample_engines() if not engine or e["key"] == engine]
+    total = 0
+    done = 0
+    ready: list[str] = []
     with _PREPARE_LOCK:
-        running = bool(_PREPARE.get(f"{engine}:{speed:.2f}", {}).get("running"))
-    return {"total": len(voices), "done": len(ready), "ready": ready, "running": running}
+        running = any(bool(_PREPARE.get(e["key"], {}).get("running")) for e in engines)
+    for info in engines:
+        key = info["key"]
+        voices = list(info.get("voices") or [])
+        total += len(voices)
+        current = [v for v in voices if _existing_sample_path(key, v) is not None]
+        done += len(current)
+        if engine:
+            ready = current
+    return {"total": total, "done": done, "ready": ready, "running": running}
 
 
 if __name__ == "__main__":

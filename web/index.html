@@ -167,13 +167,26 @@
   .fn{margin-top:7px;font-size:13px;color:var(--ok)}
   .hint{font-size:12px;color:var(--mut);margin-top:7px}
   .est{font-size:12px;color:var(--mut);margin-top:3px}
-  input[type=range]{width:100%;accent-color:var(--brand);height:28px}
+  .sample-warmup{position:fixed;right:22px;bottom:22px;z-index:20;min-width:220px;
+    background:rgba(255,255,255,.88);border:1px solid var(--glass);border-radius:12px;
+    box-shadow:var(--sh-sm);padding:10px 13px;color:var(--ink);font-size:13px;
+    backdrop-filter:var(--blur);-webkit-backdrop-filter:var(--blur)}
+  .sample-warmup .mini{height:4px;background:#e1e5f1;border-radius:4px;overflow:hidden;margin-top:7px}
+  .sample-warmup .mini>i{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--brand),var(--flow))}
   .seclbl{margin-top:16px;font-size:13px;color:var(--ink);font-weight:700}
   .subprev{position:relative;height:260px;border-radius:14px;margin-top:8px;overflow:hidden;
     background:linear-gradient(135deg,#243049,#3a2c56 60%,#2b3a4a);display:flex;justify-content:center;
     align-items:flex-end;padding:20px;border:1px solid var(--glass)}
   .subprev::after{content:"画面示意";position:absolute;top:10px;left:14px;font-size:12px;color:rgba(255,255,255,.45)}
   #sub-prev-text{max-width:92%;text-align:center;line-height:1.35;word-break:break-word}
+  .cover-editor{position:relative;aspect-ratio:16/9;max-width:520px;margin-top:8px;border-radius:12px;overflow:hidden;
+    border:1px solid var(--line);background:#202431;box-shadow:var(--sh-sm)}
+  .cover-editor img{width:100%;height:100%;object-fit:cover;display:block}
+  .cover-title{position:absolute;left:7%;top:10%;width:62%;cursor:move;user-select:none;
+    color:#ffeb00;font-weight:900;line-height:1.08;text-shadow:3px 3px 0 #050505,-3px 3px 0 #050505,3px -3px 0 #050505,-3px -3px 0 #050505;
+    background:rgba(0,0,0,.34);border:1px dashed rgba(255,255,255,.55);border-radius:8px;padding:8px;word-break:break-word}
+  .cover-resize{position:absolute;right:3px;bottom:3px;width:14px;height:14px;border-right:3px solid rgba(255,255,255,.85);
+    border-bottom:3px solid rgba(255,255,255,.85);cursor:nwse-resize}
 </style>
 </head>
 <body>
@@ -210,10 +223,14 @@
     </main>
   </div>
 </div>
+<div id="sample-warmup" class="sample-warmup hide">
+  <div id="sample-warmup-text">正在准备试听音色</div>
+  <div class="mini"><i id="sample-warmup-bar"></i></div>
+</div>
 
 <script>
 const API="";
-let JOB=null,CFG=null,ST=null,QST=null,prev={},dlFile=null,srcMode="link",jobES=null,queueES=null;
+let JOB=null,CFG=null,ST=null,QST=null,prev={},dlFile=null,coverFile=null,coverImgUrl="",srcMode="link",jobES=null,queueES=null;
 const logOpen=new Set(), pvOpen=new Set();
 
 const STEPS=[
@@ -225,14 +242,19 @@ const BADGE={pending:"待运行",running:"进行中",done:"已完成",error:"出
 async function init(){
   CFG=await (await fetch(API+"/api/config")).json();
   JOB=(await (await fetch(API+"/api/jobs",{method:"POST"})).json()).job_id;
-  buildStrip(); buildCards(); openSSE(); openQueueSSE();
+  buildStrip(); buildCards(); openSSE(); openQueueSSE(); startSampleWarmup();
 }
 function esc(s){return (s||"").replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));}
+function escAttr(s){return esc(s).replace(/"/g,"&quot;");}
 function fmt(s){s=Math.max(0,s|0);const m=(s/60)|0,x=s%60;return `${String(m).padStart(2,"0")}:${String(x).padStart(2,"0")}`;}
 function fmtDur(s){s=Math.max(0,Math.round(+s||0));const h=Math.floor(s/3600),m=Math.floor((s%3600)/60),x=s%60;
   if(h)return `${h}时${String(m).padStart(2,"0")}分`;
   if(m)return `${m}分${String(x).padStart(2,"0")}秒`;
   return `${x}秒`;}
+function fmtCost(c){if(!c)return "";
+  const cny=+c.cny||0, usd=+c.usd||0, tok=+c.total_tokens||0;
+  const money=cny>=0.01?`¥${cny.toFixed(2)}`:`¥${cny.toFixed(4)}`;
+  return ` · Gemini费用 ${money} / $${usd.toFixed(4)} · ${tok} tokens`;}
 function elem(h){const t=document.createElement("template");t.innerHTML=h.trim();return t.content.firstChild;}
 
 // ---------- 顶部产线状态 ----------
@@ -272,7 +294,7 @@ function buildCards(){
     root.appendChild(card);
     document.getElementById("cfg-"+st.key).innerHTML=cfgHtml(st.key);
   });
-  wireDownload(); wireCompose(); onTtsEngineChange();
+  wireDownload(); wireCompose(); wireCoverEditor(); onTtsEngineChange();
 }
 function toggleLog(k){logOpen.has(k)?logOpen.delete(k):logOpen.add(k);syncLog(k);}
 function syncLog(k){const o=logOpen.has(k);document.getElementById("lg-"+k).classList.toggle("hide",!o);
@@ -290,48 +312,85 @@ function engineOptions(){return (CFG.tts_engines||[]).map(e=>{
   const dis=e.available?"":" disabled";
   const tag=e.available?"":"（未配置）";
   return `<option value="${e.key}" ${e.key===CFG.tts_engine_default?"selected":""}${dis}>${e.name}${tag}</option>`;}).join("");}
-function voiceOptions(engineKey){
-  const e=ttsEngine(engineKey||curTtsEngineKey());
+let sampleStatus={}, samplePrepareRequested={}, currentSampleAudio=null,currentSampleUrl="";
+function voiceOptions(engineKey, selectedVoice){
+  const key=engineKey||curTtsEngineKey();
+  const e=ttsEngine(key);
   if(!e)return "";
   const def=(e.key===CFG.tts_engine_default&&CFG.voice_default&&e.voices.includes(CFG.voice_default))?CFG.voice_default:e.default_voice;
-  return e.voices.map(v=>`<option ${v===def?"selected":""}>${v}</option>`).join("");}
+  const picked=e.voices.includes(selectedVoice)?selectedVoice:def;
+  const st=sampleStatus[key]||{};
+  const ready=new Set(st.ready||[]);
+  return e.voices.map(v=>{
+    const state=ready.has(v)?"已缓存":(st.running?"正在生成":"未缓存");
+    return `<option value="${escAttr(v)}" ${v===picked?"selected":""}>${esc(v)}（${state}）</option>`;
+  }).join("");}
+function renderVoiceOptions(engineKey){
+  const sel=document.getElementById("tts-voice");if(!sel)return;
+  sel.innerHTML=voiceOptions(engineKey||curTtsEngineKey(),sel.value);
+}
 function onTtsEngineChange(){
   const e=ttsEngine(curTtsEngineKey());
-  document.getElementById("tts-voice").innerHTML=voiceOptions();
+  renderVoiceOptions();
   const tip=document.getElementById("tts-engine-tip");
   if(tip)tip.innerHTML=(e&&!e.available)?('⚠ 暂不可用：'+esc(e.hint||"该引擎未就绪")):"";
-  refreshPrep();
+  refreshCurrentEngineSampleStatus();
 }
 function getSpeed(){const s=document.getElementById("tts-speed");return s?(+s.value).toFixed(2):"1.00";}
-function onSpeedInput(el){document.getElementById("spd-val").textContent=(+el.value).toFixed(2)+"x";refreshPrep();}
-let prepTimer=null;
-async function refreshPrep(){
-  const st=document.getElementById("prep-status");if(!st)return;
-  const e=ttsEngine(curTtsEngineKey());
-  if(!e||!e.available){st.textContent="";return;}
-  try{
-    const r=await fetch(`${API}/api/voice-sample/prepare-status?engine=${encodeURIComponent(e.key)}&speed=${getSpeed()}`);
-    const d=await r.json();
-    const v=document.getElementById("tts-voice").value;
-    const cur=d.ready&&d.ready.includes(v);
-    st.innerHTML=d.running
-      ?`⏳ 正在准备试听 ${d.done}/${d.total}（${getSpeed()}x）…`
-      :`试听已准备 ${d.done}/${d.total}（${getSpeed()}x）${cur?" · 当前音色✓可秒播":""}`;
-    if(d.running&&!prepTimer)prepTimer=setInterval(refreshPrep,2000);
-    if(!d.running&&prepTimer){clearInterval(prepTimer);prepTimer=null;}
-  }catch(_){st.textContent="";}
+function speedOptions(){
+  const opts=[0.75,0.85,0.9,0.95,1.0,1.05,1.1,1.15,1.2,1.25,1.3,1.4,1.5], cur=+(CFG.speed_default||1.0);
+  let best=opts[0], diff=Infinity;
+  opts.forEach(x=>{const d=Math.abs(x-cur);if(d<diff){best=x;diff=d;}});
+  return opts.map(x=>`<option value="${x.toFixed(2)}" ${x===best?"selected":""}>${x.toFixed(2)}x</option>`).join("");
 }
-async function prepareAll(ev){
+let warmupTimer=null;
+function setWarmup(d){
+  const box=document.getElementById("sample-warmup"),txt=document.getElementById("sample-warmup-text"),bar=document.getElementById("sample-warmup-bar");
+  if(!box||!txt||!bar)return;
+  if(!d||!d.running){box.classList.add("hide");return;}
+  const total=Math.max(+d.total||0,1), done=Math.max(+d.done||0,0);
+  txt.textContent=`正在准备试听音色 ${Math.min(done,total)}/${total}`;
+  bar.style.width=`${Math.min(100,Math.round(done/total*100))}%`;
+  box.classList.remove("hide");
+}
+async function pollSampleWarmup(){
+  try{
+    const r=await fetch(`${API}/api/voice-sample/prepare-status`);
+    const d=await r.json();
+    setWarmup(d);
+    refreshCurrentEngineSampleStatus();
+    if(d.running&&!warmupTimer)warmupTimer=setInterval(pollSampleWarmup,2000);
+    if(!d.running&&warmupTimer){clearInterval(warmupTimer);warmupTimer=null;}
+  }catch(_){setWarmup(null);}
+}
+async function refreshCurrentEngineSampleStatus(){
   const e=ttsEngine(curTtsEngineKey());
-  if(!e||!e.available){alert("该引擎不可用");return;}
-  const btn=ev.target;btn.disabled=true;
+  if(!e||!e.available)return;
+  try{
+    const r=await fetch(`${API}/api/voice-sample/prepare-status?engine=${encodeURIComponent(e.key)}`);
+    const d=await r.json();
+    sampleStatus[e.key]=d;
+    renderVoiceOptions(e.key);
+    if((+d.done||0)<(+d.total||0)&&!d.running)ensureEngineSamples(e.key);
+  }catch(_){}
+}
+async function ensureEngineSamples(engineKey){
+  const now=Date.now();
+  if(samplePrepareRequested[engineKey]&&now-samplePrepareRequested[engineKey]<5000)return;
+  samplePrepareRequested[engineKey]=now;
+  sampleStatus[engineKey]={...(sampleStatus[engineKey]||{}),running:true};
+  renderVoiceOptions(engineKey);
   try{
     await fetch(`${API}/api/voice-sample/prepare`,{method:"POST",headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({engine:e.key,speed:+getSpeed()})});
-    refreshPrep();
-    if(!prepTimer)prepTimer=setInterval(refreshPrep,2000);
-  }catch(_){alert("准备失败");}
-  setTimeout(()=>{btn.disabled=false;},1500);
+      body:JSON.stringify({engine:engineKey})});
+    pollSampleWarmup();
+  }catch(_){}
+}
+async function startSampleWarmup(){
+  try{
+    await fetch(`${API}/api/voice-sample/prepare`,{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"});
+    pollSampleWarmup();
+  }catch(_){setWarmup(null);}
 }
 
 function cfgHtml(key){
@@ -358,15 +417,11 @@ function cfgHtml(key){
       <div class="hint" id="tts-engine-tip"></div>
       <label>配音音色 / 风格</label>
       <div style="display:flex;gap:10px;align-items:center">
-        <select id="tts-voice" style="flex:1" onchange="refreshPrep()">${voiceOptions()}</select>
-        <button class="btn ghost" style="flex:0 0 auto" onclick="sample(event)">🔊 试听</button>
-        <button class="btn ghost" style="flex:0 0 auto" id="prep-btn" onclick="prepareAll(event)">⚡ 准备全部</button>
+        <select id="tts-voice" style="flex:1">${voiceOptions()}</select>
+        <select id="tts-speed" style="flex:0 0 106px;height:43px">${speedOptions()}</select>
+        <button class="btn ghost" style="flex:0 0 auto;margin-top:0" onclick="sample(event)">🔊 试听</button>
       </div>
-      <div class="hint" id="prep-status"></div>
-      <label>语速 <span id="spd-val">${(+(CFG.speed_default||1)).toFixed(2)}x</span></label>
-      <input type="range" id="tts-speed" min="0.7" max="1.3" step="0.05" value="${CFG.speed_default||1.0}"
-        oninput="onSpeedInput(this)">
-      <div class="hint">情感 / 治愈内容建议略慢（0.85–0.95x），更显沉稳。语速也作用于试听，方便对比。段间停顿用默认值。</div>`;
+      <div class="hint">试听会按所选倍速播放；正式生成时也使用同一个倍速。段间停顿用默认值。</div>`;
   if(key==="compose")return `
       <label>底图模式</label>
       <span class="radio"><input type="radio" name="cmode" value="original" checked> 原视频画面</span>
@@ -375,21 +430,35 @@ function cfgHtml(key){
         <div><label>背景色(上)</label><input type="color" id="cm-bg" value="#1a2150" style="height:44px;padding:4px"></div>
         <div><label>背景色(下)</label><input type="color" id="cm-bg2" value="#3a2a6a" style="height:44px;padding:4px"></div></div></div>
       <label>字幕样式（为灵性/情感/荣格心理学预设，选一个即可）</label>
-      <select id="cm-preset" style="max-width:420px" onchange="updateSubPreview()">
+      <select id="cm-preset" style="max-width:420px" onchange="applySubPresetDefaults()">
         ${CFG.sub_presets.map(p=>`<option value="${p.key}" ${p.key===CFG.sub_preset_default?"selected":""}>${p.name}</option>`).join("")}</select>
+      <div class="rowf" style="max-width:560px;flex-wrap:nowrap">
+        <div style="min-width:0"><label>字幕字号 <span id="cm-fontsize-val">70</span></label><input type="range" id="cm-fontsize" min="42" max="96" step="2" value="70" style="width:100%" oninput="updateSubPreview()"></div>
+        <div style="min-width:0"><label>字幕位置</label><select id="cm-position" onchange="updateSubPreview()">
+          <option value="bottom">底部</option><option value="middle">中间</option><option value="top">顶部</option>
+        </select></div>
+      </div>
       <div class="subprev" id="sub-prev"><div id="sub-prev-text">这是一句中文字幕示例</div></div>
       <div style="margin-top:6px">
         <span class="radio"><input type="checkbox" id="cm-bi"> 中英双语</span>
         <span class="radio"><input type="checkbox" id="cm-burn" checked> 烧录硬字幕</span></div>
-      <div class="hint">封面标题由 DeepSeek 自动生成，合成时一并输出可上传的封面图。</div>
-      <div class="logtoggle" onclick="loadCues()">👁 预览字幕内容</div><div id="cue-prev"></div>`;
+      <div class="hint">本步只合成视频；封面底图和标题叠加在第 6 步生成。</div>`;
   if(key==="publish")return `<label>信息模板</label>
       <select id="pb-platform" style="max-width:420px"><option value="bilibili">哔哩哔哩 B站</option></select>
-      <div class="rowf" style="max-width:560px">
-        <div><label>分区 TID</label><input type="text" id="pb-tid" value="228" placeholder="228"></div>
-        <div><label>版权类型</label><select id="pb-copyright"><option value="1">自制</option><option value="2">转载</option></select></div>
+      <label>封面底图</label>
+      <input type="file" id="cover-file" accept="image/*">
+      <div class="cover-editor" id="cover-editor">
+        <img id="cover-img" alt="">
+        <div class="cover-title" id="cover-title-box"><span id="cover-title-text">封面标题</span><i class="cover-resize" id="cover-resize"></i></div>
       </div>
-      <div class="hint">第 6 步只生成标题、简介、标签、分区等信息，并把成片、封面和数据保存到 output 项目文件夹。</div>`;
+      <div class="rowf" style="max-width:560px">
+        <div><label>封面标题（留空则自动生成）</label><input type="text" id="cover-title-input" placeholder="自动生成封面标题" oninput="updateCoverPreviewText()"></div>
+      </div>
+      <div class="rowf" style="max-width:560px;flex-wrap:nowrap">
+        <div style="min-width:0"><label>字号 <span id="cover-font-val">132</span></label><input type="range" id="cover-font" min="64" max="220" step="4" value="132" style="width:100%" oninput="updateCoverPreviewStyle()"></div>
+        <div style="min-width:0"><label>标题宽度 <span id="cover-width-val">62%</span></label><input type="range" id="cover-width" min="25" max="90" step="1" value="62" style="width:100%" oninput="updateCoverPreviewStyle()"></div>
+      </div>
+      <div class="hint">拖动封面标题调整位置；第 6 步会用上传底图叠加生成的标题并归档。</div>`;
   return "";
 }
 
@@ -409,13 +478,68 @@ function wireDownload(){
 function wireCompose(){
   document.querySelectorAll('input[name=cmode]').forEach(r=>r.onchange=()=>{
     document.getElementById("img-opts").classList.toggle("hide",document.querySelector('input[name=cmode]:checked').value!=="image");});
-  updateSubPreview();
+  applySubPresetDefaults();
+}
+function wireCoverEditor(){
+  const file=document.getElementById("cover-file"),img=document.getElementById("cover-img"),box=document.getElementById("cover-title-box"),editor=document.getElementById("cover-editor"),handle=document.getElementById("cover-resize");
+  if(!file||!img||!box||!editor)return;
+  file.onchange=()=>{const f=file.files&&file.files[0];if(!f)return;coverFile=f;if(coverImgUrl)URL.revokeObjectURL(coverImgUrl);
+    coverImgUrl=URL.createObjectURL(f);img.src=coverImgUrl;};
+  let drag=null,resize=null;
+  if(handle)handle.onpointerdown=ev=>{ev.stopPropagation();resize={x:ev.clientX,width:box.offsetWidth};handle.setPointerCapture(ev.pointerId);};
+  box.onpointerdown=ev=>{drag={x:ev.clientX,y:ev.clientY,left:box.offsetLeft,top:box.offsetTop};box.setPointerCapture(ev.pointerId);};
+  box.onpointermove=ev=>{
+    if(resize){
+      const width=Math.max(editor.clientWidth*.25,Math.min(editor.clientWidth*.9,resize.width+ev.clientX-resize.x));
+      box.style.width=(width/editor.clientWidth*100).toFixed(1)+"%";
+      const w=document.getElementById("cover-width"),wv=document.getElementById("cover-width-val");
+      if(w)w.value=String(Math.round(width/editor.clientWidth*100));
+      if(wv)wv.textContent=Math.round(width/editor.clientWidth*100)+"%";
+      return;
+    }
+    if(!drag)return;
+    const maxL=editor.clientWidth-box.offsetWidth,maxT=editor.clientHeight-box.offsetHeight;
+    const left=Math.max(0,Math.min(maxL,drag.left+ev.clientX-drag.x));
+    const top=Math.max(0,Math.min(maxT,drag.top+ev.clientY-drag.y));
+    box.style.left=(left/editor.clientWidth*100).toFixed(2)+"%";
+    box.style.top=(top/editor.clientHeight*100).toFixed(2)+"%";
+  };
+  box.onpointerup=box.onpointercancel=()=>{drag=null;resize=null;};
+  if(handle)handle.onpointerup=handle.onpointercancel=()=>{resize=null;};
+  updateCoverPreviewStyle();updateCoverPreviewText();
+}
+function updateCoverPreviewText(){
+  const text=document.getElementById("cover-title-text"),input=document.getElementById("cover-title-input");
+  if(text)text.textContent=(input&&input.value.trim())||"封面标题";
+}
+function updateCoverPreviewStyle(){
+  const box=document.getElementById("cover-title-box"),font=document.getElementById("cover-font"),w=document.getElementById("cover-width");
+  if(!box)return;
+  const fs=+(font&&font.value||132), width=+(w&&w.value||62);
+  box.style.fontSize=Math.max(18,fs/1920*520)+"px";
+  box.style.width=width+"%";
+  const fv=document.getElementById("cover-font-val"),wv=document.getElementById("cover-width-val");
+  if(fv)fv.textContent=String(fs);
+  if(wv)wv.textContent=width+"%";
 }
 function curPreset(){const sel=document.getElementById("cm-preset");
   return (CFG.sub_presets.find(p=>p.key===(sel&&sel.value))||CFG.sub_presets[0]);}
+function applySubPresetDefaults(){
+  const s=curPreset(),fs=document.getElementById("cm-fontsize"),pos=document.getElementById("cm-position");
+  if(fs)fs.value=String(s.fontsize||70);
+  if(pos)pos.value=s.position||"bottom";
+  updateSubPreview();
+}
+function subStyle(){
+  const s={...curPreset()};
+  const fs=document.getElementById("cm-fontsize"),pos=document.getElementById("cm-position");
+  if(fs)s.fontsize=+fs.value||s.fontsize;
+  if(pos)s.position=pos.value||s.position;
+  return s;
+}
 function updateSubPreview(){
   const t=document.getElementById("sub-prev-text"),box=document.getElementById("sub-prev");if(!t)return;
-  const s=curPreset();
+  const s=subStyle();
   const px=(s.fontsize*box.clientHeight/1080).toFixed(1);   // 按 1080p 基准等比缩放
   const o=Math.max(1.2,px/16);
   t.style.fontFamily=`"${s.font}"`;
@@ -424,6 +548,7 @@ function updateSubPreview(){
   t.style.fontWeight=String(s.bold)==="1"?"800":"500";
   t.style.textShadow=`${-o}px ${-o}px 0 ${s.outline},${o}px ${-o}px 0 ${s.outline},${-o}px ${o}px 0 ${s.outline},${o}px ${o}px 0 ${s.outline}`;
   box.style.alignItems={bottom:"flex-end",middle:"center",top:"flex-start"}[s.position]||"flex-end";
+  const fv=document.getElementById("cm-fontsize-val");if(fv)fv.textContent=String(Math.round(s.fontsize));
 }
 
 // ---------- 收集配置 ----------
@@ -434,9 +559,17 @@ function collect(step,forceTts){const g=id=>document.getElementById(id);
   if(step==="tts")return {engine:(g("tts-engine")||{}).value||CFG.tts_engine_default,voice:g("tts-voice").value,speed:g("tts-speed").value,force:!!forceTts};
   if(step==="compose")return {mode:(document.querySelector('input[name=cmode]:checked')||{}).value||"original",
     bg:g("cm-bg")?.value,bg2:g("cm-bg2")?.value,preset:g("cm-preset").value,
+    fontsize:+(g("cm-fontsize")?.value||0),position:g("cm-position")?.value||"",
     bilingual:g("cm-bi").checked,burn:g("cm-burn").checked};
-  if(step==="publish")return {platform:g("pb-platform").value,mode:"archive",
-    tid:g("pb-tid").value,copyright:g("pb-copyright").value};
+  if(step==="publish"){
+    const box=g("cover-title-box"),ed=g("cover-editor");
+    const x=box&&ed?(box.offsetLeft/Math.max(ed.clientWidth,1)):0.07;
+    const y=box&&ed?(box.offsetTop/Math.max(ed.clientHeight,1)):0.10;
+    return {platform:g("pb-platform").value,mode:"archive",
+      cover_title:(g("cover-title-input")||{}).value||"",
+      cover_x:x,cover_y:y,
+      cover_font_size:+((g("cover-font")||{}).value||132),
+      cover_width:+((g("cover-width")||{}).value||62)/100};}
   return {};}
 function collectAll(){
   const cfgs={};STEPS.forEach(s=>cfgs[s.key]=collect(s.key,s.key==="tts"));
@@ -536,6 +669,7 @@ async function run(step){
     if(qi&&!cfg.url)cfg.url=qi.url;
     if(srcMode==="file"){if(!dlFile){alert("请选择文件");return;}fd.append("file",dlFile);}
     else if(!cfg.url){alert("请填写链接");return;}}
+  if(step==="publish"&&coverFile)fd.append("file",coverFile);
   fd.append("config_json",JSON.stringify(cfg));
   logOpen.add(step);syncLog(step);
   const r=await fetch(`${API}/api/jobs/${JOB}/run`,{method:"POST",body:fd});
@@ -549,6 +683,7 @@ async function runAll(){
   if(srcMode!=="file"&&!cfgs.download.url){alert("请先在第1步填写链接或上传文件");return;}
   const fd=new FormData();fd.append("configs_json",JSON.stringify(cfgs));
   if(srcMode==="file"&&dlFile)fd.append("file",dlFile);
+  if(coverFile)fd.append("cover_file",coverFile);
   logOpen.add("download");syncLog("download");
   const r=await fetch(`${API}/api/jobs/${JOB}/run_all`,{method:"POST",body:fd});
   if(!r.ok)alert((await r.json().catch(()=>({}))).detail||"提交失败");
@@ -646,7 +781,8 @@ function apply(){
     const est=document.getElementById("est-"+k);
     if(est){
       const elapsed=info.elapsed_sec?` · 已用 ${fmtDur(info.elapsed_sec)}`:"";
-      est.textContent=`预计 ${fmtDur(info.estimate_sec||0)}${elapsed}`;
+      const cost=k==="tts"?fmtCost((info.result||{}).gemini_cost):"";
+      est.textContent=`预计 ${fmtDur(info.estimate_sec||0)}${elapsed}${cost}`;
     }
     const rb=document.getElementById("rb-"+k);
     if(rb)rb.disabled=!!ST.running||!prevDone;
@@ -696,10 +832,7 @@ async function loadPreview(key, open=false){
     pv.innerHTML=`<div class="ptitle">配音音轨试听</div><audio controls src="${API}/api/jobs/${JOB}/dub.wav?t=${Date.now()}"></audio>`;
   else if(key==="compose")
     pv.innerHTML=`<div class="ptitle">成片预览</div><video controls src="${API}/api/jobs/${JOB}/video.mp4?t=${Date.now()}"></video>
-      <div class="ptitle" style="margin-top:14px">封面图（可直接上传）</div>
-      <img class="cover" src="${API}/api/jobs/${JOB}/cover.png?t=${Date.now()}">
       <div><a class="dl" href="${API}/api/jobs/${JOB}/video.mp4?download=true">⬇ 下载 MP4</a>
-      <a class="dl alt" href="${API}/api/jobs/${JOB}/cover.png" download>⬇ 下载封面</a>
       <a class="dl alt" href="${API}/api/jobs/${JOB}/sub?fmt=srt">⬇ 下载字幕</a></div>`;
   else if(key==="publish"){const m=await (await fetch(`${API}/api/jobs/${JOB}/metadata`)).json();
     pv.innerHTML=`<div class="ptitle">保存信息（已保存到 output）</div>
@@ -712,16 +845,23 @@ async function loadPreview(key, open=false){
       <div><a class="dl" href="${API}/api/jobs/${JOB}/video.mp4?download=true">⬇ 下载成片</a></div>`;}
 }
 
-async function loadCues(){const box=document.getElementById("cue-prev");
-  const d=await (await fetch(`${API}/api/jobs/${JOB}/cues`)).json();
-  if(!d.cues.length){box.innerHTML='<div class="hint">暂无字幕，请先完成配音。</div>';return;}
-  box.innerHTML=`<div class="list" style="margin-top:10px">${d.cues.map(c=>`<div class="cue"><span class="tc">${fmt(c.start)}→${fmt(c.end)}</span><span>${esc(c.zh)}</span></div>`).join("")}</div>`;}
-
 async function sample(ev){const v=document.getElementById("tts-voice").value;
-  const fd=new FormData();fd.append("voice",v);fd.append("engine",curTtsEngineKey());fd.append("speed",getSpeed());
+  if(currentSampleAudio){currentSampleAudio.pause();currentSampleAudio.currentTime=0;currentSampleAudio=null;}
+  if(currentSampleUrl){URL.revokeObjectURL(currentSampleUrl);currentSampleUrl="";}
+  const fd=new FormData();fd.append("voice",v);fd.append("engine",curTtsEngineKey());
   const btn=ev.target;btn.disabled=true;btn.textContent="合成中…";
   try{const r=await fetch(`${API}/api/voice-sample`,{method:"POST",body:fd});if(!r.ok)throw 0;
-    new Audio(URL.createObjectURL(await r.blob())).play();refreshPrep();}catch(e){alert("试听失败");}
+    currentSampleUrl=URL.createObjectURL(await r.blob());
+    const audio=new Audio(currentSampleUrl);
+    const rate=Math.max(0.5,Math.min(2.0,+getSpeed()||1));
+    audio.playbackRate=rate;
+    audio.preservesPitch=true;
+    audio.mozPreservesPitch=true;
+    audio.webkitPreservesPitch=true;
+    currentSampleAudio=audio;
+    audio.onended=()=>{if(currentSampleAudio===audio)currentSampleAudio=null;};
+    audio.play();
+    refreshCurrentEngineSampleStatus();}catch(e){alert("试听失败");}
   btn.disabled=false;btn.textContent="🔊 试听";}
 
 init();

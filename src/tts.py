@@ -23,7 +23,7 @@ _ENGINES = {
     "gemini": ("tts_gemini", "Gemini TTS（云端·可控情感）"),
     "cosyvoice": ("tts_cosyvoice", "CosyVoice2（本地·情感指令）"),
 }
-DEFAULT_ENGINE = "qwen3"
+DEFAULT_ENGINE = "gemini"
 
 
 def _engine_key(engine: str | None = None) -> str:
