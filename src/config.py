@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import os
+import re
 import shutil
 from pathlib import Path
 
@@ -96,8 +97,16 @@ def _load_env() -> None:
         if not line or line.startswith("#") or "=" not in line:
             continue
         key, val = line.split("=", 1)
-        key, val = key.strip(), val.strip().strip('"').strip("'")
-        os.environ.setdefault(key, val)
+        key = key.strip()
+        val = val.strip()
+        # 去掉行内注释（仅当未被引号包裹且 # 前有空白时，避免误删值里的 #）
+        if val[:1] not in ("'", '"'):
+            m = re.search(r"\s#", val)
+            if m:
+                val = val[:m.start()].strip()
+        val = val.strip('"').strip("'")
+        # 用 .env 覆盖已存在的系统环境变量：项目 .env 为准，避免旧的系统变量盖住新配置
+        os.environ[key] = val
 
 
 _load_env()
@@ -135,6 +144,49 @@ QWEN_TTS_ATTENTION = os.environ.get("QWEN_TTS_ATTENTION", "sdpa")
 QWEN_TTS_CACHE_DIR = Path(os.environ.get("QWEN_TTS_CACHE_DIR", str(MODELS_DIR / "qwen3-tts")))
 QWEN_TTS_MAX_CHARS = int(os.environ.get("QWEN_TTS_MAX_CHARS", "280"))
 QWEN_TTS_BATCH_SIZE = int(os.environ.get("QWEN_TTS_BATCH_SIZE", "2"))
+
+# F5-TTS（本地·音色克隆）：使用 f5_tts 自带参考片段；也可自定义参考音频做声音克隆。
+F5_REF_AUDIO = os.environ.get("TTS_REF_AUDIO", "")   # 自定义参考音频（wav/flac），留空用内置音色
+F5_REF_TEXT = os.environ.get("TTS_REF_TEXT", "")     # 自定义参考音频对应的文字
+
+# Azure TTS（云端·神经网络语音，REST V1）：需在 .env 填 KEY 与 REGION。
+AZURE_SPEECH_KEY = os.environ.get("AZURE_SPEECH_KEY", "")
+AZURE_SPEECH_REGION = os.environ.get("AZURE_SPEECH_REGION", "eastus")
+# 朗读风格（mstts express-as style），留空为默认；荣格/疗愈类可用 calm / narration-relaxed / gentle。
+AZURE_TTS_STYLE = os.environ.get("AZURE_TTS_STYLE", "")
+AZURE_TTS_STYLE_DEGREE = os.environ.get("AZURE_TTS_STYLE_DEGREE", "1")
+
+# CosyVoice2（阿里·开源本地）：需安装 CosyVoice 仓库并下载 CosyVoice2-0.5B 模型。
+# 暂搁置：当前共享环境 transformers 版本下 Qwen2 LM 会过度生成（停不下来），输出不稳定。
+# 待用独立 venv（transformers==4.51.3）修复后，设 COSYVOICE_ENABLED=1 启用。
+COSYVOICE_ENABLED = os.environ.get("COSYVOICE_ENABLED", "0") == "1"
+COSYVOICE_REPO_DIR = os.environ.get("COSYVOICE_REPO_DIR", str(TOOLS_DIR / "CosyVoice"))
+COSYVOICE_MODEL_DIR = os.environ.get(
+    "COSYVOICE_MODEL_DIR", str(MODELS_DIR / "cosyvoice" / "CosyVoice2-0.5B"))
+# 参考音频（zero-shot 音色克隆）；留空则用 F5 内置参考片段兜底。
+COSYVOICE_REF_AUDIO = os.environ.get("COSYVOICE_REF_AUDIO", "")
+COSYVOICE_REF_TEXT = os.environ.get("COSYVOICE_REF_TEXT", "")
+# 情感/风格指令（instruct2），如「用温暖沉稳、富有疗愈感的语气朗读」；留空走 zero-shot。
+COSYVOICE_INSTRUCT = os.environ.get(
+    "COSYVOICE_INSTRUCT",
+    "用温暖、沉稳、富有疗愈感的语气，像一位睿智的引路人在娓娓道来。",
+)
+
+# Gemini TTS（云端·可控情感，REST generateContent）：需在 .env 填 GEMINI_API_KEY。
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", os.environ.get("GOOGLE_API_KEY", ""))
+# 接入地址：国内直连官方域名常被墙/拒，可填你的反代/中转地址（到 /v1beta 上一级即可）。
+GEMINI_BASE_URL = os.environ.get(
+    "GEMINI_BASE_URL", "https://generativelanguage.googleapis.com").rstrip("/")
+GEMINI_TTS_MODEL = os.environ.get("GEMINI_TTS_MODEL", "gemini-2.5-pro-preview-tts")
+# 自然语言风格指令（会拼到正文前引导语气）；留空则不加引导。
+GEMINI_TTS_STYLE = os.environ.get(
+    "GEMINI_TTS_STYLE", "用温暖、沉稳、富有疗愈感的语气朗读")
+# 自动语气：用 DeepSeek 读全文后，按 Gemini 官方风格提示生成贴合内容的语气/情感指令（更真实）。
+GEMINI_TTS_AUTO_STYLE = os.environ.get("GEMINI_TTS_AUTO_STYLE", "1") == "1"
+# 计费估算（美元/百万 token）：用于在日志里估算花费。官方价可能调整，可用 .env 覆盖。
+GEMINI_PRICE_IN = float(os.environ.get("GEMINI_PRICE_IN", "0"))    # 0=按模型默认表
+GEMINI_PRICE_OUT = float(os.environ.get("GEMINI_PRICE_OUT", "0"))
+USD_TO_CNY = float(os.environ.get("USD_TO_CNY", "7.2"))
 
 # ---------------------------------------------------------------- 字幕样式
 SUB_FONT = os.environ.get("SUB_FONT", "Microsoft YaHei")

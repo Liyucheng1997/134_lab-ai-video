@@ -48,7 +48,9 @@ def mux(video: Path, dub_audio: Path, ass: Path, out_path: Path) -> Path:
     x264 = ["-c:v", "libx264", "-preset", "medium", "-crf", "20", "-pix_fmt", "yuv420p"]
 
     if _nvenc_listed():
-        nvenc = ["-c:v", "h264_nvenc", "-preset", "p5", "-cq", "23"]
+        # 必须强制 8-bit yuv420p：源若为 10-bit（如 AV1 10-bit），NVENC 默认会输出
+        # H.264 High 10（10-bit），B站/微信/多数播放器不兼容，会"格式错误"。
+        nvenc = ["-c:v", "h264_nvenc", "-preset", "p5", "-cq", "23", "-pix_fmt", "yuv420p"]
         try:
             log("mux", "尝试 NVENC 硬件编码")
             run(_build_cmd(video, dub_audio, vf, nvenc, out_path),

@@ -893,10 +893,13 @@ def index():
 
 @app.get("/api/config")
 def get_config():
-    from src.tts import _BUILTIN_VOICES
+    from src import tts
+    tts_engines = tts.engines_info()
+    cur_engine = config.TTS_ENGINE if any(e["key"] == config.TTS_ENGINE for e in tts_engines) else tts.DEFAULT_ENGINE
     return {
         "steps": STEP_DEFS,
-        "voices": list(_BUILTIN_VOICES.keys()),
+        "tts_engines": tts_engines,
+        "tts_engine_default": cur_engine,
         "voice_default": config.TTS_VOICE,
         "speed_default": config.TTS_SPEED,
         "whisper_models": ["small", "large-v3-turbo"],
@@ -1278,20 +1281,81 @@ _SAMPLE_DIR = config.WORK_DIR / "_samples"
 _SAMPLE_DIR.mkdir(parents=True, exist_ok=True)
 
 
+# 固定试听文案：试听与"准备全部"用同一句，保证缓存可复用
+_SAMPLE_TEXT = "我们从小被教育，爱是神圣的。但真正困住我们的，往往不是生活本身，而是对结果的执念。"
+_PREPARE: dict[str, dict] = {}
+_PREPARE_LOCK = threading.Lock()
+
+
+def _sample_path(engine: str, voice: str, speed: float) -> Path:
+    # 按 引擎+音色+语速 缓存（语速不同音频不同）
+    key = uuid.uuid5(uuid.NAMESPACE_DNS, f"{engine}:{voice}:{speed:.2f}").hex[:12]
+    return _SAMPLE_DIR / f"{key}.wav"
+
+
+def _engine_voices(engine: str) -> list[str]:
+    from src import tts
+    info = next((e for e in tts.engines_info() if e["key"] == engine), None)
+    return list(info["voices"]) if info else []
+
+
 @app.post("/api/voice-sample")
-def voice_sample(voice: str = Form(...), text: str = Form("你好，这是配音音色试听。")):
-    # 固定试听文案 → 按音色缓存，生成一次后直接复用（快）
-    key = uuid.uuid5(uuid.NAMESPACE_DNS, voice).hex[:10]
-    out = _SAMPLE_DIR / f"{key}.wav"
+def voice_sample(voice: str = Form(...), engine: str = Form(""), speed: float = Form(1.0)):
+    out = _sample_path(engine, voice, speed)
     if not out.exists():
         with _RUN_LOCK:
             if not out.exists():
                 cmd = [sys.executable, "-u", str(config.BASE_DIR / "voice_sample.py"),
-                       "--voice", voice, "--text", text[:60], "--out", str(out)]
+                       "--engine", engine, "--voice", voice, "--speed", str(speed),
+                       "--text", _SAMPLE_TEXT, "--out", str(out)]
                 r = subprocess.run(cmd, cwd=str(config.BASE_DIR), capture_output=True, text=True)
                 if r.returncode != 0 or not out.exists():
                     raise HTTPException(500, "试听合成失败")
     return _serve(out, "audio/wav")
+
+
+def _prepare_worker(engine: str, speed: float, jobs: list[dict], pk: str):
+    spec = _SAMPLE_DIR / f"_spec_{uuid.uuid4().hex[:8]}.json"
+    spec.write_text(json.dumps(jobs, ensure_ascii=False), encoding="utf-8")
+    try:
+        with _RUN_LOCK:
+            cmd = [sys.executable, "-u", str(config.BASE_DIR / "voice_sample.py"),
+                   "--engine", engine, "--speed", str(speed),
+                   "--text", _SAMPLE_TEXT, "--spec", str(spec)]
+            subprocess.run(cmd, cwd=str(config.BASE_DIR), capture_output=True, text=True)
+    finally:
+        with _PREPARE_LOCK:
+            _PREPARE.setdefault(pk, {})["running"] = False
+        spec.unlink(missing_ok=True)
+
+
+@app.post("/api/voice-sample/prepare")
+def prepare_all(payload: dict = Body(...)):
+    engine = (payload.get("engine") or "").strip()
+    speed = round(float(payload.get("speed") or 1.0), 2)
+    voices = _engine_voices(engine)
+    if not voices:
+        raise HTTPException(400, "该引擎无可用音色")
+    pk = f"{engine}:{speed:.2f}"
+    jobs = [{"voice": v, "out": str(_sample_path(engine, v, speed))}
+            for v in voices if not _sample_path(engine, v, speed).exists()]
+    with _PREPARE_LOCK:
+        if _PREPARE.get(pk, {}).get("running"):
+            return {"total": len(voices), "running": True}
+        _PREPARE[pk] = {"running": bool(jobs)}
+    if jobs:
+        threading.Thread(target=_prepare_worker, args=(engine, speed, jobs, pk), daemon=True).start()
+    return {"total": len(voices), "running": bool(jobs)}
+
+
+@app.get("/api/voice-sample/prepare-status")
+def prepare_status(engine: str, speed: float = 1.0):
+    speed = round(float(speed), 2)
+    voices = _engine_voices(engine)
+    ready = [v for v in voices if _sample_path(engine, v, speed).exists()]
+    with _PREPARE_LOCK:
+        running = bool(_PREPARE.get(f"{engine}:{speed:.2f}", {}).get("running"))
+    return {"total": len(voices), "done": len(ready), "ready": ready, "running": running}
 
 
 if __name__ == "__main__":

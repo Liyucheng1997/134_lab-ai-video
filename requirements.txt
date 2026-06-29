@@ -8,6 +8,13 @@ faster-whisper>=1.2
 qwen-tts>=0.1.1
 soundfile>=0.13
 
+# 可选配音引擎（按需安装；界面会自动检测是否就绪）
+# F5-TTS（本地·音色克隆）：
+#   pip install f5-tts
+# Azure TTS（云端）：无需额外依赖，仅需在 .env 填 AZURE_SPEECH_KEY / AZURE_SPEECH_REGION
+# CosyVoice2（本地·情感指令）：
+#   git clone https://github.com/FunAudioLLM/CosyVoice，按其 README 装依赖并下载 CosyVoice2-0.5B
+
 # 翻译 / 下载
 requests>=2.32
 yt-dlp>=2026.6

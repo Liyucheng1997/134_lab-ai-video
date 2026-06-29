@@ -272,7 +272,7 @@ function buildCards(){
     root.appendChild(card);
     document.getElementById("cfg-"+st.key).innerHTML=cfgHtml(st.key);
   });
-  wireDownload(); wireCompose();
+  wireDownload(); wireCompose(); onTtsEngineChange();
 }
 function toggleLog(k){logOpen.has(k)?logOpen.delete(k):logOpen.add(k);syncLog(k);}
 function syncLog(k){const o=logOpen.has(k);document.getElementById("lg-"+k).classList.toggle("hide",!o);
@@ -284,7 +284,55 @@ function togglePv(k){
 function syncPv(k){const o=pvOpen.has(k);document.getElementById("pv-"+k).classList.toggle("hide",!o);
   document.getElementById("ptg-"+k).textContent=(o?"▾":"▸")+" 输出结果";}
 
-function voiceOptions(){return CFG.voices.map(v=>`<option ${v===CFG.voice_default?"selected":""}>${v}</option>`).join("");}
+function ttsEngine(key){return (CFG.tts_engines||[]).find(e=>e.key===key)||null;}
+function curTtsEngineKey(){const sel=document.getElementById("tts-engine");return (sel&&sel.value)||CFG.tts_engine_default;}
+function engineOptions(){return (CFG.tts_engines||[]).map(e=>{
+  const dis=e.available?"":" disabled";
+  const tag=e.available?"":"（未配置）";
+  return `<option value="${e.key}" ${e.key===CFG.tts_engine_default?"selected":""}${dis}>${e.name}${tag}</option>`;}).join("");}
+function voiceOptions(engineKey){
+  const e=ttsEngine(engineKey||curTtsEngineKey());
+  if(!e)return "";
+  const def=(e.key===CFG.tts_engine_default&&CFG.voice_default&&e.voices.includes(CFG.voice_default))?CFG.voice_default:e.default_voice;
+  return e.voices.map(v=>`<option ${v===def?"selected":""}>${v}</option>`).join("");}
+function onTtsEngineChange(){
+  const e=ttsEngine(curTtsEngineKey());
+  document.getElementById("tts-voice").innerHTML=voiceOptions();
+  const tip=document.getElementById("tts-engine-tip");
+  if(tip)tip.innerHTML=(e&&!e.available)?('⚠ 暂不可用：'+esc(e.hint||"该引擎未就绪")):"";
+  refreshPrep();
+}
+function getSpeed(){const s=document.getElementById("tts-speed");return s?(+s.value).toFixed(2):"1.00";}
+function onSpeedInput(el){document.getElementById("spd-val").textContent=(+el.value).toFixed(2)+"x";refreshPrep();}
+let prepTimer=null;
+async function refreshPrep(){
+  const st=document.getElementById("prep-status");if(!st)return;
+  const e=ttsEngine(curTtsEngineKey());
+  if(!e||!e.available){st.textContent="";return;}
+  try{
+    const r=await fetch(`${API}/api/voice-sample/prepare-status?engine=${encodeURIComponent(e.key)}&speed=${getSpeed()}`);
+    const d=await r.json();
+    const v=document.getElementById("tts-voice").value;
+    const cur=d.ready&&d.ready.includes(v);
+    st.innerHTML=d.running
+      ?`⏳ 正在准备试听 ${d.done}/${d.total}（${getSpeed()}x）…`
+      :`试听已准备 ${d.done}/${d.total}（${getSpeed()}x）${cur?" · 当前音色✓可秒播":""}`;
+    if(d.running&&!prepTimer)prepTimer=setInterval(refreshPrep,2000);
+    if(!d.running&&prepTimer){clearInterval(prepTimer);prepTimer=null;}
+  }catch(_){st.textContent="";}
+}
+async function prepareAll(ev){
+  const e=ttsEngine(curTtsEngineKey());
+  if(!e||!e.available){alert("该引擎不可用");return;}
+  const btn=ev.target;btn.disabled=true;
+  try{
+    await fetch(`${API}/api/voice-sample/prepare`,{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({engine:e.key,speed:+getSpeed()})});
+    refreshPrep();
+    if(!prepTimer)prepTimer=setInterval(refreshPrep,2000);
+  }catch(_){alert("准备失败");}
+  setTimeout(()=>{btn.disabled=false;},1500);
+}
 
 function cfgHtml(key){
   if(key==="download")return `
@@ -304,13 +352,21 @@ function cfgHtml(key){
   if(key==="translate")return `<label>翻译引擎</label>
       <select id="tr-engine" style="max-width:420px">${CFG.engines.map(e=>`<option value="${e.key}">${e.name}</option>`).join("")}</select>
       ${CFG.has_deepseek?"":'<div class="hint">⚠ 未配置 DEEPSEEK_API_KEY，请用 Google 或在 .env 填 key。</div>'}`;
-  if(key==="tts")return `<div class="rowf">
-      <div><label>配音音色（Qwen3-TTS，默认 ryan）</label><select id="tts-voice">${voiceOptions()}</select></div>
-      <div style="flex:0 0 auto;display:flex;align-items:flex-end"><button class="btn ghost" onclick="sample(event)">🔊 试听</button></div></div>
+  if(key==="tts")return `
+      <label>配音引擎</label>
+      <select id="tts-engine" style="max-width:420px" onchange="onTtsEngineChange()">${engineOptions()}</select>
+      <div class="hint" id="tts-engine-tip"></div>
+      <label>配音音色 / 风格</label>
+      <div style="display:flex;gap:10px;align-items:center">
+        <select id="tts-voice" style="flex:1" onchange="refreshPrep()">${voiceOptions()}</select>
+        <button class="btn ghost" style="flex:0 0 auto" onclick="sample(event)">🔊 试听</button>
+        <button class="btn ghost" style="flex:0 0 auto" id="prep-btn" onclick="prepareAll(event)">⚡ 准备全部</button>
+      </div>
+      <div class="hint" id="prep-status"></div>
       <label>语速 <span id="spd-val">${(+(CFG.speed_default||1)).toFixed(2)}x</span></label>
       <input type="range" id="tts-speed" min="0.7" max="1.3" step="0.05" value="${CFG.speed_default||1.0}"
-        oninput="document.getElementById('spd-val').textContent=(+this.value).toFixed(2)+'x'">
-      <div class="hint">情感 / 治愈内容建议略慢（0.85–0.95x），更显沉稳。段间停顿用默认值。</div>`;
+        oninput="onSpeedInput(this)">
+      <div class="hint">情感 / 治愈内容建议略慢（0.85–0.95x），更显沉稳。语速也作用于试听，方便对比。段间停顿用默认值。</div>`;
   if(key==="compose")return `
       <label>底图模式</label>
       <span class="radio"><input type="radio" name="cmode" value="original" checked> 原视频画面</span>
@@ -375,7 +431,7 @@ function collect(step,forceTts){const g=id=>document.getElementById(id);
   if(step==="download")return {url:(g("dl-url")||{}).value?.trim()||"",media:(document.querySelector('input[name=media]:checked')||{}).value||"video"};
   if(step==="asr")return {model:g("asr-model").value,language:g("asr-lang").value};
   if(step==="translate")return {engine:g("tr-engine").value};
-  if(step==="tts")return {voice:g("tts-voice").value,speed:g("tts-speed").value,force:!!forceTts};
+  if(step==="tts")return {engine:(g("tts-engine")||{}).value||CFG.tts_engine_default,voice:g("tts-voice").value,speed:g("tts-speed").value,force:!!forceTts};
   if(step==="compose")return {mode:(document.querySelector('input[name=cmode]:checked')||{}).value||"original",
     bg:g("cm-bg")?.value,bg2:g("cm-bg2")?.value,preset:g("cm-preset").value,
     bilingual:g("cm-bi").checked,burn:g("cm-burn").checked};
@@ -662,10 +718,10 @@ async function loadCues(){const box=document.getElementById("cue-prev");
   box.innerHTML=`<div class="list" style="margin-top:10px">${d.cues.map(c=>`<div class="cue"><span class="tc">${fmt(c.start)}→${fmt(c.end)}</span><span>${esc(c.zh)}</span></div>`).join("")}</div>`;}
 
 async function sample(ev){const v=document.getElementById("tts-voice").value;
-  const fd=new FormData();fd.append("voice",v);fd.append("text","我们从小被教育，爱是神圣的。但真正困住我们的，往往不是生活本身，而是对结果的执念。");
+  const fd=new FormData();fd.append("voice",v);fd.append("engine",curTtsEngineKey());fd.append("speed",getSpeed());
   const btn=ev.target;btn.disabled=true;btn.textContent="合成中…";
   try{const r=await fetch(`${API}/api/voice-sample`,{method:"POST",body:fd});if(!r.ok)throw 0;
-    new Audio(URL.createObjectURL(await r.blob())).play();}catch(e){alert("试听失败");}
+    new Audio(URL.createObjectURL(await r.blob())).play();refreshPrep();}catch(e){alert("试听失败");}
   btn.disabled=false;btn.textContent="🔊 试听";}
 
 init();

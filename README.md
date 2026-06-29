@@ -44,7 +44,7 @@ powershell -ExecutionPolicy Bypass -File .\web.ps1
 | 1 下载/导入 | 链接或上传；视频 / 仅音频 | 原视频播放 |
 | 2 语音识别 | 模型(small/large-v3-turbo)、语言 | 逐句原文 |
 | 3 翻译 | **DeepSeek** / **Google 免费** | 中英对照 |
-| 4 中文配音 | Qwen3-TTS 音色（默认 `ryan`，可**试听**）、语速 | 配音音轨试听 |
+| 4 中文配音 | **可选引擎**：Qwen3-TTS / F5-TTS / Azure / CosyVoice2，音色或风格、语速，可**试听** | 配音音轨试听 |
 | 5 合成 | **原视频** 或 **图片(纯色+标题)**；字幕格式 ass/srt/vtt；中英双语；硬字幕 | 字幕可视化 + 成片 + 下载 |
 | 6 生成信息归档 | 信息模板(B站)、分区、版权类型 | 自动生成标题/简介/标签/分区，并把成片、封面和数据保存到 `output` 子文件夹 |
 
@@ -82,6 +82,19 @@ powershell -ExecutionPolicy Bypass -File .\run.ps1 "URL" --voice 沉稳男声 --
 | `--out` | 自定义输出路径 |
 
 Qwen3-TTS 配置可在 `.env` 里覆盖：`TTS_VOICE=ryan`、`TTS_SPEED=1.15`、`QWEN_TTS_MODEL=Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice`。
+
+### 配音引擎（可在界面第 4 步切换）
+
+| 引擎 | 类型 | 自然度 | 说明 / 启用方式 |
+|---|---|---|---|
+| **Qwen3-TTS** | 本地 | ★★☆ | 默认，开箱即用，稳定 |
+| **F5-TTS** | 本地 | ★★☆ | 音色克隆，需 `pip install f5-tts`；可用 `TTS_REF_AUDIO/TEXT` 克隆指定声音 |
+| **Azure TTS** | 云端 | ★★★★ | 最稳、性价比高；`.env` 填 `AZURE_SPEECH_KEY`、`AZURE_SPEECH_REGION`，可设 `AZURE_TTS_STYLE=calm` |
+| **Gemini TTS** | 云端 | ★★★★ | 自然语言控情感；`.env` 填 `GEMINI_API_KEY`（aistudio.google.com/apikey），可设 `GEMINI_TTS_STYLE` |
+| **CosyVoice2** | 本地 | ★★★★ | 阿里开源，情感指令；`git clone CosyVoice` 并下载 `CosyVoice2-0.5B`，设置 `COSYVOICE_REPO_DIR/MODEL_DIR` |
+
+界面会自动检测每个引擎是否就绪：未安装/未配置的引擎在下拉框中置灰并给出提示。各引擎参数见 `.env.example`。
+> 想进一步提升「像中国人」的自然度，可考虑接火山引擎(豆包)或 MiniMax 云端语音——本项目已做成可插拔，新增引擎只需在 `src/` 加一个 `tts_xxx.py` 并在 `src/tts.py` 的 `_ENGINES` 注册。
 
 ## 对齐说明
 

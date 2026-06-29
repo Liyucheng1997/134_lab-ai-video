@@ -117,6 +117,8 @@ def run_translate(job_id: str, cfg: dict) -> dict:
 # ----------------------------------------------------------------- 4) 配音
 def run_tts(job_id: str, cfg: dict) -> dict:
     wd = work_dir_of(job_id)
+    if cfg.get("engine"):
+        config.TTS_ENGINE = cfg["engine"]
     if cfg.get("voice"):
         config.TTS_VOICE = cfg["voice"]
     if cfg.get("speed") is not None:
