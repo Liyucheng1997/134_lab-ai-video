@@ -1074,6 +1074,21 @@ def _queue_snapshot() -> dict:
             "stop_requested": stop, "items": items}
 
 
+def _gen_ts(meta: dict, archive_dir: Path) -> float:
+    """归档的生成时间（epoch 秒）。优先用 metadata.json 里写死的 created_at
+    （ISO 字符串、不随清缓存改变），缺失时退回目录 mtime。"""
+    iso = str(meta.get("created_at") or "").strip()
+    if iso:
+        try:
+            return time.mktime(time.strptime(iso, "%Y-%m-%dT%H:%M:%S"))
+        except (ValueError, OverflowError):
+            pass
+    try:
+        return archive_dir.stat().st_mtime
+    except OSError:
+        return 0.0
+
+
 def _archive_summary(archive_dir: Path, meta: dict, job_id: str = "", item_id: str = "") -> dict:
     video = archive_dir / "video.mp4"
     return {
@@ -1082,7 +1097,7 @@ def _archive_summary(archive_dir: Path, meta: dict, job_id: str = "", item_id: s
         "title": meta.get("project_title") or meta.get("title") or archive_dir.name,
         "full_title": meta.get("title") or "",
         "archive_dir": str(archive_dir),
-        "created_at": archive_dir.stat().st_mtime,
+        "created_at": _gen_ts(meta, archive_dir),
         "uploaded": bool(meta.get("uploaded")),
         "uploaded_at": meta.get("uploaded_at", ""),
         "has_video": video.exists(),
@@ -1113,11 +1128,8 @@ def _archive_list() -> list[dict]:
         meta = load_json(meta_path) or {}
         if meta and meta.get("uploaded") and (archive_dir / "video.mp4").exists():
             by_dir[key] = _archive_summary(archive_dir, meta)
-    def sort_key(item: dict):
-        uploaded_at = str(item.get("uploaded_at") or "")
-        return uploaded_at or str(item.get("created_at") or "")
-
-    return sorted(by_dir.values(), key=sort_key, reverse=True)
+    # 按生成时间（created_at，epoch 秒）倒序，最新的在最上面。
+    return sorted(by_dir.values(), key=lambda it: float(it.get("created_at") or 0), reverse=True)
 
 
 def _run_queue_thread(configs: dict):
@@ -1259,6 +1271,9 @@ def get_config():
                     {"key": "google", "name": "Google 翻译（免费，快）"}],
         "sub_presets": config.SUB_PRESETS,
         "sub_preset_default": config.SUB_PRESET,
+        "sub_cover_default": config.SUB_COVER_DEFAULT,
+        "sub_cover_opacity_default": config.SUB_COVER_OPACITY,
+        "sub_cover_height_default": config.SUB_COVER_HEIGHT,
         "default_cover_available": config.DEFAULT_COVER_IMAGE.exists(),
         "has_deepseek": bool(config.DEEPSEEK_API_KEY),
         "bilibili_logged_in": Path(config.BILIBILI_COOKIE_FILE).exists(),

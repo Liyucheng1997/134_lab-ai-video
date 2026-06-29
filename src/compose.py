@@ -234,11 +234,15 @@ def image_to_video(image: Path, audio: Path, ass: Path | None, out_path: Path) -
 
 def compose(*, mode: str, work_dir: Path, audio: Path, ass: Path | None,
             out_path: Path, title: str = "", bg: str = "#10131a",
-            bg2: str | None = "#1d2740", image: Path | None = None) -> Path:
-    """统一入口。mode: original | image。封面生成由第 6 步归档负责。"""
+            bg2: str | None = "#1d2740", image: Path | None = None,
+            cover: dict | None = None) -> Path:
+    """统一入口。mode: original | image。封面生成由第 6 步归档负责。
+
+    cover：底部遮挡色条参数（仅 original 模式生效；图片模式没有原字幕，忽略）。
+    """
     cover_png = work_dir / "cover.png"
     if mode == "image":
-        cover = image or make_cover(title, cover_png, bg=bg, bg2=bg2)
-        return image_to_video(cover, audio, ass, out_path)
+        cover_img = image or make_cover(title, cover_png, bg=bg, bg2=bg2)
+        return image_to_video(cover_img, audio, ass, out_path)
     # original：复用 mux（原视频 + 配音 + 烧字幕，-shortest 截断）
-    return mux.mux(work_dir / "source.mp4", audio, ass, out_path)
+    return mux.mux(work_dir / "source.mp4", audio, ass, out_path, cover=cover)

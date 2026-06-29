@@ -14,6 +14,21 @@ def _escape_subs_path(ass_path: Path) -> str:
     return p
 
 
+def _cover_filter(cover: dict | None) -> str:
+    """底部全宽半透明色条，遮住原片烧死的字幕。
+
+    返回带尾逗号的 drawbox 滤镜片段（接在 subtitles 之前，让色条在字幕下层），
+    cover 为空时返回空串。height 为色条高度占画面比例，y 贴底。
+    """
+    if not cover:
+        return ""
+    h = float(cover.get("height", config.SUB_COVER_HEIGHT))
+    op = float(cover.get("opacity", config.SUB_COVER_OPACITY))
+    color = str(cover.get("color", config.SUB_COVER_COLOR))
+    return (f"drawbox=x=0:y=ih*(1-{h:.4f}):w=iw:h=ih*{h:.4f}:"
+            f"color={color}@{op:.3f}:t=fill,")
+
+
 def _nvenc_listed() -> bool:
     try:
         out = subprocess.run(
@@ -39,12 +54,16 @@ def _build_cmd(video: Path, dub_audio: Path, vf: str, vcodec: list[str], out_pat
     ]
 
 
-def mux(video: Path, dub_audio: Path, ass: Path, out_path: Path) -> Path:
+def mux(video: Path, dub_audio: Path, ass: Path, out_path: Path,
+        cover: dict | None = None) -> Path:
     """合成：原视频画面 + 烧录字幕 + 中文配音音轨。
 
     优先尝试 NVENC 硬件编码；若驱动/版本不匹配则自动回退到 libx264。
+    cover 不为空时，先在底部垫一条半透明色条遮住原片烧死的字幕。
     """
-    vf = f"subtitles='{_escape_subs_path(ass)}'"
+    if cover:
+        log("mux", "底部色条遮挡原字幕：开启")
+    vf = f"{_cover_filter(cover)}subtitles='{_escape_subs_path(ass)}'"
     x264 = ["-c:v", "libx264", "-preset", "medium", "-crf", "20", "-pix_fmt", "yuv420p"]
 
     if _nvenc_listed():

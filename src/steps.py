@@ -251,11 +251,24 @@ def run_compose(job_id: str, cfg: dict) -> dict:
         mode = "image"                          # 没有视频只能用图片
         log("compose", "无原视频，自动改用图片合成")
 
+    cover = None
+    if cfg.get("cover_original"):
+        def _f(val, default, lo, hi):
+            try:
+                return max(lo, min(hi, float(val)))
+            except (TypeError, ValueError):
+                return default
+        opacity = _f(cfg.get("cover_opacity"), config.SUB_COVER_OPACITY, 0.0, 1.0)
+        height = _f(cfg.get("cover_height"), config.SUB_COVER_HEIGHT, 0.05, 0.45)
+        cover = {"height": height, "opacity": opacity, "color": config.SUB_COVER_COLOR}
+        log("compose", f"底部色条遮挡原片烧死字幕：开启（不透明度 {opacity:.2f}，高度 {height:.0%}）")
+
     out = final_path(job_id)
     compose_mod.compose(
         mode=mode, work_dir=wd, audio=wd / "dub.wav",
         ass=(ass if cfg.get("burn", True) else None), out_path=out,
         title="", bg=cfg.get("bg", "#10131a"), bg2=cfg.get("bg2", "#1d2740"),
+        cover=cover,
     )
     return {"mode": mode, "output": str(out)}
 

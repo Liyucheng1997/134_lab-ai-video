@@ -37,11 +37,16 @@
   .gpu-bar>i{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--brand),var(--flow));transition:width .3s}
   @media(max-width:760px){.head{display:block}.gpu{margin-top:12px;min-width:0;max-width:none}}
   .app{display:grid;grid-template-columns:340px minmax(0,1fr);gap:20px;align-items:start}
-  @media(max-width:980px){.app{grid-template-columns:1fr}.side{position:static!important;max-height:none!important}}
-  .side{position:sticky;top:22px;max-height:calc(100vh - 44px);overflow:auto;display:flex;flex-direction:column;gap:16px}
+  @media(max-width:980px){.app{grid-template-columns:1fr}
+    .side{position:static!important;height:auto!important;max-height:none!important;overflow:visible!important}
+    .queue-panel,.archive-panel{flex:none!important}
+    .qlist,.archive-list{overflow:visible!important;max-height:none!important}}
+  .side{position:sticky;top:22px;height:calc(100vh - 44px);overflow:hidden;display:flex;flex-direction:column;gap:16px}
   .queue-panel,.archive-panel{background:var(--card);
     border:1px solid var(--glass);border-radius:18px;box-shadow:var(--sh-sm);padding:16px;backdrop-filter:var(--blur);
-    -webkit-backdrop-filter:var(--blur)}
+    -webkit-backdrop-filter:var(--blur);display:flex;flex-direction:column;min-height:0;overflow:hidden}
+  .queue-panel{flex:1.4 1 0}
+  .archive-panel{flex:1 1 0}
   .qhead{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px}
   .qtitle{font-size:17px;font-weight:800}
   .qsum{font-size:12px;color:var(--mut)}
@@ -49,7 +54,7 @@
   .qactions{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
   .qactions .btn{margin-top:0;padding:9px 12px;font-size:13px;border-radius:10px}
   .qactions .btn.ghost{padding:8px 11px}
-  .qlist{display:flex;flex-direction:column;gap:10px;margin-top:14px}
+  .qlist{display:flex;flex-direction:column;gap:10px;margin-top:14px;flex:1 1 auto;min-height:0;overflow-y:auto;padding-right:4px}
   .qitem{border:1px solid var(--line);background:var(--soft);border-radius:12px;padding:10px;cursor:pointer}
   .qitem.active{border-color:var(--brand);background:rgba(255,255,255,.84);box-shadow:0 8px 20px rgba(85,102,255,.14)}
   .qitem.running{border-color:rgba(245,166,35,.6)}
@@ -74,7 +79,7 @@
   .archive-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:8px}
   .archive-title{font-size:15px;font-weight:800}
   .archive-count{font-size:12px;color:var(--mut)}
-  .archive-list{display:flex;flex-direction:column;gap:8px}
+  .archive-list{display:flex;flex-direction:column;gap:8px;flex:1 1 auto;min-height:0;overflow-y:auto;padding-right:4px}
   .archive-item{border:1px solid var(--line);background:rgba(255,255,255,.42);border-radius:10px;padding:9px}
   .archive-item.uploaded{border-color:rgba(16,185,129,.42)}
   .archive-row{display:flex;align-items:center;gap:8px}
@@ -212,7 +217,14 @@
     background:linear-gradient(135deg,#243049,#3a2c56 60%,#2b3a4a);display:flex;justify-content:center;
     align-items:flex-end;padding:20px;border:1px solid var(--glass)}
   .subprev::after{content:"画面示意";position:absolute;top:10px;left:14px;font-size:12px;color:rgba(255,255,255,.45)}
-  #sub-prev-text{max-width:92%;text-align:center;line-height:1.35;word-break:break-word}
+  #sub-prev-text{max-width:92%;text-align:center;line-height:1.35;word-break:break-word;position:relative;z-index:3}
+  /* 原片烧死的英文字幕（示意）：盖底条开启时被遮住 */
+  .sub-prev-orig{position:absolute;left:0;right:0;bottom:12%;z-index:1;text-align:center;pointer-events:none;
+    font-size:clamp(13px,3.2vw,21px);font-weight:700;color:#fff;font-style:italic;
+    text-shadow:-1.5px -1.5px 0 #000,1.5px -1.5px 0 #000,-1.5px 1.5px 0 #000,1.5px 1.5px 0 #000}
+  .sub-prev-cover{position:absolute;left:0;right:0;bottom:0;height:18%;z-index:2;background:#000;opacity:.6;
+    display:none;pointer-events:none}
+  .sub-prev-cover.on{display:block}
   .cover-editor{position:relative;aspect-ratio:16/9;max-width:520px;margin-top:8px;border-radius:12px;overflow:hidden;
     border:1px solid var(--line);background:#202431;box-shadow:var(--sh-sm)}
   .cover-editor img{width:100%;height:100%;object-fit:cover;display:block}
@@ -317,6 +329,15 @@ function fmtDate(ts){
   if(Number.isNaN(d.getTime()))return "--";
   const y=d.getFullYear(),m=String(d.getMonth()+1).padStart(2,"0"),day=String(d.getDate()).padStart(2,"0");
   return `${y}-${m}-${day}`;
+}
+function fmtDateTime(ts){
+  const n=+ts||0;
+  if(!n)return "--";
+  const d=new Date(n<1e12?n*1000:n);
+  if(Number.isNaN(d.getTime()))return "--";
+  const m=String(d.getMonth()+1).padStart(2,"0"),day=String(d.getDate()).padStart(2,"0");
+  const hh=String(d.getHours()).padStart(2,"0"),mm=String(d.getMinutes()).padStart(2,"0");
+  return `${d.getFullYear()}-${m}-${day} ${hh}:${mm}`;
 }
 function fmtSize(bytes){
   bytes=+bytes||0;
@@ -543,10 +564,24 @@ function cfgHtml(key){
           <option value="bottom">底部</option><option value="middle">中间</option><option value="top">顶部</option>
         </select></div>
       </div>
-      <div class="subprev" id="sub-prev"><div id="sub-prev-text">这是一句中文字幕示例</div></div>
+      <div class="subprev" id="sub-prev">
+        <div class="sub-prev-orig" id="sub-prev-orig">its manifestation will be.</div>
+        <div class="sub-prev-cover" id="sub-prev-cover"></div>
+        <div id="sub-prev-text">这是一句中文字幕示例</div></div>
       <div style="margin-top:6px">
         <span class="radio"><input type="checkbox" id="cm-bi"> 中英双语</span>
-        <span class="radio"><input type="checkbox" id="cm-burn" checked> 烧录硬字幕</span></div>
+        <span class="radio"><input type="checkbox" id="cm-burn" checked> 烧录硬字幕</span>
+        <span class="radio"><input type="checkbox" id="cm-cover" ${CFG.sub_cover_default?"checked":""} onchange="updateSubPreview()"> 遮挡原字幕</span></div>
+      <div class="hint">「遮挡原字幕」：原片底部如有烧死的英文字幕，勾选后会在底部垫一条色条盖住，再写中文（仅原片模式有效）。</div>
+      <div id="cm-cover-box" class="hide" style="margin-top:8px;max-width:520px">
+        <div class="rowf" style="flex-wrap:nowrap;gap:14px">
+          <div style="flex:1;min-width:0"><label>遮挡不透明度 <span id="cm-cover-op-val">90%</span></label>
+            <input type="range" id="cm-cover-op" min="50" max="100" step="5" value="${Math.round((CFG.sub_cover_opacity_default||0.9)*100)}" style="width:100%" oninput="updateSubPreview()"></div>
+          <div style="flex:1;min-width:0"><label>遮挡高度 <span id="cm-cover-h-val">22%</span></label>
+            <input type="range" id="cm-cover-h" min="10" max="40" step="2" value="${Math.round((CFG.sub_cover_height_default||0.22)*100)}" style="width:100%" oninput="updateSubPreview()"></div>
+        </div>
+        <div class="hint">不透明度调到 100% 完全盖死白字；原字幕位置偏上就加大遮挡高度（色条从底部往上长）。</div>
+      </div>
       <div class="hint">本步只合成视频；封面底图和标题叠加在第 6 步生成。</div>`;
   if(key==="publish")return `<label>信息模板</label>
       <select id="pb-platform" style="max-width:420px"><option value="bilibili">哔哩哔哩 B站</option></select>
@@ -653,6 +688,14 @@ function updateSubPreview(){
   t.style.fontWeight=String(s.bold)==="1"?"800":"500";
   t.style.textShadow=`${-o}px ${-o}px 0 ${s.outline},${o}px ${-o}px 0 ${s.outline},${-o}px ${o}px 0 ${s.outline},${o}px ${o}px 0 ${s.outline}`;
   box.style.alignItems={bottom:"flex-end",middle:"center",top:"flex-start"}[s.position]||"flex-end";
+  const covOn=document.getElementById("cm-cover"),on=!!(covOn&&covOn.checked);
+  const covBox=document.getElementById("cm-cover-box");if(covBox)covBox.classList.toggle("hide",!on);
+  const opEl=document.getElementById("cm-cover-op"),hEl=document.getElementById("cm-cover-h");
+  const op=(+(opEl&&opEl.value)||90)/100,hh=(+(hEl&&hEl.value)||22);
+  const opv=document.getElementById("cm-cover-op-val");if(opv)opv.textContent=Math.round(op*100)+"%";
+  const hv=document.getElementById("cm-cover-h-val");if(hv)hv.textContent=hh+"%";
+  const cov=document.getElementById("sub-prev-cover");
+  if(cov){cov.classList.toggle("on",on);cov.style.opacity=String(op);cov.style.height=hh+"%";}
   const fv=document.getElementById("cm-fontsize-val");if(fv)fv.textContent=String(Math.round(s.fontsize));
 }
 function updateComposeAudioSpeed(){
@@ -691,7 +734,10 @@ function collect(step,forceTts){const g=id=>document.getElementById(id);
   if(step==="compose")return {mode:"original",audio_speed:g("cm-audio-speed")?.value||"1.00",
     preset:g("cm-preset").value,
     fontsize:+(g("cm-fontsize")?.value||0),position:g("cm-position")?.value||"",
-    bilingual:g("cm-bi").checked,burn:g("cm-burn").checked};
+    bilingual:g("cm-bi").checked,burn:g("cm-burn").checked,
+    cover_original:!!g("cm-cover")?.checked,
+    cover_opacity:(+(g("cm-cover-op")?.value)||90)/100,
+    cover_height:(+(g("cm-cover-h")?.value)||22)/100};
   if(step==="publish"){
     const box=g("cover-title-box"),ed=g("cover-editor");
     const x=box&&ed?(box.offsetLeft/Math.max(ed.clientWidth,1)):0.47;
@@ -978,7 +1024,7 @@ function renderArchives(){
         <div class="archive-name">${esc(ar.title||ar.full_title||ar.archive_dir)}</div>
         <div class="archive-tag">已上传</div>
       </div>
-      <div class="archive-meta">时长 ${fmtDur(ar.duration_sec||0)} · 生成时间 ${fmtDate(ar.created_at)}</div>
+      <div class="archive-meta">时长 ${fmtDur(ar.duration_sec||0)} · 生成时间 ${fmtDateTime(ar.created_at)}</div>
       <div class="qtools">
         <button class="qtool" onclick="openArchive('${enc}',event)">打开输出</button>
       </div>

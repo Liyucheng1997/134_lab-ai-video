@@ -159,6 +159,21 @@ SUB_OUTLINE = os.environ.get("SUB_OUTLINE", "#000000")    # 描边颜色
 SUB_POSITION = os.environ.get("SUB_POSITION", "bottom")   # bottom | middle | top
 SUB_BOLD = os.environ.get("SUB_BOLD", "1")               # 是否加粗
 
+# 遮挡原片烧死的英文字幕：在底部垫一条全宽半透明色条，盖住原字幕后再写中文。
+# 仅 original 模式有意义（图片模式没有原字幕）；按需在界面勾选，全局默认可用 .env 改。
+SUB_COVER_DEFAULT = os.environ.get("SUB_COVER_ORIGINAL", "0").strip() in ("1", "true", "True", "yes")
+SUB_COVER_COLOR = os.environ.get("SUB_COVER_COLOR", "black")   # ffmpeg 颜色名或 #RRGGBB
+try:
+    SUB_COVER_OPACITY = float(os.environ.get("SUB_COVER_OPACITY", "0.9"))
+except ValueError:
+    SUB_COVER_OPACITY = 0.9
+SUB_COVER_OPACITY = max(0.0, min(1.0, SUB_COVER_OPACITY))
+try:
+    SUB_COVER_HEIGHT = float(os.environ.get("SUB_COVER_HEIGHT", "0.22"))  # 色条高度占画面比例
+except ValueError:
+    SUB_COVER_HEIGHT = 0.22
+SUB_COVER_HEIGHT = max(0.05, min(0.45, SUB_COVER_HEIGHT))
+
 # 字幕样式预设（面向 灵性 / 情感 / 荣格心理学 赛道）：用户只选其一，无需逐项调。
 # 字号偏大、清晰；颜色温暖/沉静，描边保证任何画面上都看得清。
 SUB_PRESETS = [
