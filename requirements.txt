@@ -1,19 +1,15 @@
-# 本项目在 Windows + NVIDIA(RTX 50 系) 上开发，默认使用 tools/qwen3-tts-env。
-# 该环境已包含 CUDA 版 torch、Qwen3-TTS、faster-whisper 和 Web 依赖。
+# 本项目在 Windows + NVIDIA(RTX 50 系) 上开发，默认使用 tools/f5-tts-env。
+# 该环境已包含 CUDA 版 torch、F5-TTS、faster-whisper 和 Web 依赖。
 
 # ASR
 faster-whisper>=1.2
 
 # TTS（含 torch / torchaudio，建议用 CUDA 版）
-qwen-tts>=0.1.1
 soundfile>=0.13
+f5-tts>=1.1.20
 
-# 可选配音引擎（按需安装；界面会自动检测是否就绪）
 # F5-TTS（本地·音色克隆）：
-#   pip install f5-tts
-# Azure TTS（云端）：无需额外依赖，仅需在 .env 填 AZURE_SPEECH_KEY / AZURE_SPEECH_REGION
-# CosyVoice2（本地·情感指令）：
-#   git clone https://github.com/FunAudioLLM/CosyVoice，按其 README 装依赖并下载 CosyVoice2-0.5B
+#   可通过 TTS_REF_AUDIO / TTS_REF_TEXT 做 zero-shot 音色克隆
 
 # 翻译 / 下载
 requests>=2.32

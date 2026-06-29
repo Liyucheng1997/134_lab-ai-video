@@ -342,10 +342,10 @@ def prepare(*, work_dir: Path, final_video: Path, platform: str = "bilibili",
             archive_dir: Path | str | None = None,
             cover_image: Path | str | None = None,
             cover_title: str = "",
-            cover_x: float = 0.07,
-            cover_y: float = 0.10,
-            cover_font_size: int = 132,
-            cover_width: float = 0.62) -> dict:
+            cover_x: float = config.DEFAULT_COVER_TITLE_X,
+            cover_y: float = config.DEFAULT_COVER_TITLE_Y,
+            cover_font_size: int = config.DEFAULT_COVER_TITLE_FONT_SIZE,
+            cover_width: float = config.DEFAULT_COVER_TITLE_WIDTH) -> dict:
     """生成保存信息包并归档，返回 metadata dict。"""
     translated = load_json(work_dir / "translated.json") or []
     full_text = "".join(s.get("zh", "") for s in translated)[:4000]
@@ -360,6 +360,7 @@ def prepare(*, work_dir: Path, final_video: Path, platform: str = "bilibili",
 
     project_title = _project_title_from_meta(raw_meta, full_text)
     theme = _theme_from_meta(raw_meta, full_text)
+    fixed_archive_dir = archive_dir is not None
     archive_dir = Path(archive_dir) if archive_dir else _next_archive_dir(project_title)
     archive_dir.mkdir(parents=True, exist_ok=True)
     try:
@@ -370,7 +371,8 @@ def prepare(*, work_dir: Path, final_video: Path, platform: str = "bilibili",
         rel_final_video = final_video.resolve().relative_to(archive_dir.resolve())
     except ValueError:
         rel_final_video = None
-    archive_dir = _rename_archive_dir(archive_dir, project_title)
+    if not fixed_archive_dir:
+        archive_dir = _rename_archive_dir(archive_dir, project_title)
     if rel_work_dir is not None:
         work_dir = archive_dir / rel_work_dir
     if rel_final_video is not None:
@@ -383,15 +385,17 @@ def prepare(*, work_dir: Path, final_video: Path, platform: str = "bilibili",
     shutil.copy(final_video, video_dst)
 
     uploaded_cover = Path(cover_image) if cover_image else None
+    if not (uploaded_cover and uploaded_cover.exists()) and config.DEFAULT_COVER_IMAGE.exists():
+        uploaded_cover = config.DEFAULT_COVER_IMAGE
     if uploaded_cover and uploaded_cover.exists():
         cover = make_cover_from_image(
             uploaded_cover,
             work_dir / "cover.png",
             short_cover_title,
-            x=float(cover_x or 0.07),
-            y=float(cover_y or 0.10),
-            font_size=int(cover_font_size or 132),
-            box_width=float(cover_width or 0.62),
+            x=float(cover_x if cover_x is not None else config.DEFAULT_COVER_TITLE_X),
+            y=float(cover_y if cover_y is not None else config.DEFAULT_COVER_TITLE_Y),
+            font_size=int(cover_font_size or config.DEFAULT_COVER_TITLE_FONT_SIZE),
+            box_width=float(cover_width if cover_width is not None else config.DEFAULT_COVER_TITLE_WIDTH),
         )
     else:
         cover = work_dir / "cover.png"
@@ -412,10 +416,10 @@ def prepare(*, work_dir: Path, final_video: Path, platform: str = "bilibili",
         "project_title": project_title,
         "cover_title": short_cover_title,
         "cover_layout": {
-            "x": float(cover_x or 0.07),
-            "y": float(cover_y or 0.10),
-            "font_size": int(cover_font_size or 132),
-            "width": float(cover_width or 0.62),
+            "x": float(cover_x if cover_x is not None else config.DEFAULT_COVER_TITLE_X),
+            "y": float(cover_y if cover_y is not None else config.DEFAULT_COVER_TITLE_Y),
+            "font_size": int(cover_font_size or config.DEFAULT_COVER_TITLE_FONT_SIZE),
+            "width": float(cover_width if cover_width is not None else config.DEFAULT_COVER_TITLE_WIDTH),
         },
         "tid": selected_tid,
         "copyright": selected_copyright,

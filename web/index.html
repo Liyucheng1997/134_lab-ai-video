@@ -22,12 +22,24 @@
       radial-gradient(700px 520px at 50% 108%,rgba(17,196,214,.22),transparent 60%),
       linear-gradient(135deg,var(--bg1),var(--bg2));background-attachment:fixed;min-height:100vh}
   .wrap{max-width:1680px;margin:0 auto;padding:30px 26px 90px}
+  .head{display:flex;align-items:flex-start;justify-content:space-between;gap:18px;margin-bottom:20px}
+  .head-main{min-width:0}
   h1{font-size:27px;margin:0 0 4px;font-weight:800;letter-spacing:.5px;
     background:linear-gradient(120deg,var(--brand),var(--brand2));-webkit-background-clip:text;background-clip:text;color:transparent}
-  .sub{color:var(--mut);margin:0 0 20px;font-size:14px}
+  .sub{color:var(--mut);margin:0;font-size:14px}
+  .gpu{min-width:310px;max-width:430px;background:rgba(255,255,255,.68);border:1px solid var(--glass);border-radius:14px;
+    box-shadow:var(--sh-sm);padding:9px 12px;backdrop-filter:var(--blur);-webkit-backdrop-filter:var(--blur)}
+  .gpu-top{display:flex;align-items:center;justify-content:space-between;gap:10px;font-size:12px;color:var(--mut)}
+  .gpu-name{font-weight:800;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .gpu-grid{display:grid;grid-template-columns:1fr 1fr;gap:4px 12px;margin-top:5px;font-size:12px;color:var(--mut)}
+  .gpu-grid b{color:var(--ink);font-weight:800}
+  .gpu-bar{height:5px;background:#e1e5f1;border-radius:5px;overflow:hidden;margin-top:7px}
+  .gpu-bar>i{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--brand),var(--flow));transition:width .3s}
+  @media(max-width:760px){.head{display:block}.gpu{margin-top:12px;min-width:0;max-width:none}}
   .app{display:grid;grid-template-columns:340px minmax(0,1fr);gap:20px;align-items:start}
-  @media(max-width:980px){.app{grid-template-columns:1fr}.queue-panel{position:static!important;max-height:none!important}}
-  .queue-panel{position:sticky;top:22px;max-height:calc(100vh - 44px);overflow:auto;background:var(--card);
+  @media(max-width:980px){.app{grid-template-columns:1fr}.side{position:static!important;max-height:none!important}}
+  .side{position:sticky;top:22px;max-height:calc(100vh - 44px);overflow:auto;display:flex;flex-direction:column;gap:16px}
+  .queue-panel,.archive-panel{background:var(--card);
     border:1px solid var(--glass);border-radius:18px;box-shadow:var(--sh-sm);padding:16px;backdrop-filter:var(--blur);
     -webkit-backdrop-filter:var(--blur)}
   .qhead{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px}
@@ -58,6 +70,18 @@
   .qtools{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
   .qtool{border:1px solid var(--line);background:#fff;border-radius:8px;padding:4px 7px;font-size:12px;cursor:pointer;color:var(--ink)}
   .qtool:disabled{opacity:.45;cursor:not-allowed}
+  .qtool.uploaded{border-color:rgba(16,185,129,.35);background:rgba(16,185,129,.10);color:var(--ok);font-weight:700}
+  .archive-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:8px}
+  .archive-title{font-size:15px;font-weight:800}
+  .archive-count{font-size:12px;color:var(--mut)}
+  .archive-list{display:flex;flex-direction:column;gap:8px}
+  .archive-item{border:1px solid var(--line);background:rgba(255,255,255,.42);border-radius:10px;padding:9px}
+  .archive-item.uploaded{border-color:rgba(16,185,129,.42)}
+  .archive-row{display:flex;align-items:center;gap:8px}
+  .archive-name{min-width:0;flex:1;font-size:12px;font-weight:700;line-height:1.35;word-break:break-word}
+  .archive-tag{font-size:11px;border-radius:999px;padding:2px 7px;background:#fff;color:var(--mut);white-space:nowrap}
+  .archive-item.uploaded .archive-tag{background:rgba(16,185,129,.12);color:var(--ok)}
+  .archive-meta{font-size:11px;color:var(--mut);margin-top:5px}
   .main{min-width:0}
 
   /* 顶部控制条 + 产线状态 */
@@ -156,7 +180,17 @@
   .cue:last-child{border-bottom:0}
   .cue .tc{color:var(--mut);font-family:Consolas,monospace;font-size:11px;white-space:nowrap;padding-top:2px}
   .cue .en{color:var(--mut);font-size:12px}
-  video,audio{width:100%;margin-top:8px;border-radius:12px;background:#000}
+  video{width:100%;margin-top:8px;border-radius:12px;background:#000}
+  audio{width:100%;margin-top:8px;border-radius:12px;background:transparent;display:block}
+  .audio-shell{margin-top:8px;padding:5px;background:rgba(255,255,255,.74);border:1px solid var(--line);
+    border-radius:14px;box-shadow:inset 0 1px 0 rgba(255,255,255,.65);overflow:hidden}
+  .audio-shell audio{margin:0;border-radius:10px}
+  .audio-shell audio::-webkit-media-controls-enclosure{border-radius:10px;background:#f8fafc}
+  .audio-shell audio::-webkit-media-controls-panel{background:#f8fafc}
+  .audio-speed-row{display:flex;align-items:center;gap:10px;max-width:560px}
+  .audio-speed-row select{flex:0 0 120px}
+  .audio-speed-row .audio-shell{flex:1;min-width:260px;margin-top:0}
+  @media(max-width:620px){.audio-speed-row{flex-wrap:wrap}.audio-speed-row select,.audio-speed-row .audio-shell{flex:1 1 100%;min-width:0}}
   img.cover{max-width:520px;width:100%;border-radius:12px;margin-top:8px;box-shadow:var(--sh-sm)}
   .dl{display:inline-block;margin:12px 10px 0 0;padding:11px 20px;border-radius:11px;color:#fff;font-weight:700;text-decoration:none;font-size:14px;
     background:linear-gradient(135deg,var(--ok),#0bbf86);box-shadow:0 8px 18px rgba(16,185,129,.28)}
@@ -182,7 +216,7 @@
   .cover-editor{position:relative;aspect-ratio:16/9;max-width:520px;margin-top:8px;border-radius:12px;overflow:hidden;
     border:1px solid var(--line);background:#202431;box-shadow:var(--sh-sm)}
   .cover-editor img{width:100%;height:100%;object-fit:cover;display:block}
-  .cover-title{position:absolute;left:7%;top:10%;width:62%;cursor:move;user-select:none;
+  .cover-title{position:absolute;left:47%;top:10%;width:53%;cursor:move;user-select:none;
     color:#ffeb00;font-weight:900;line-height:1.08;text-shadow:3px 3px 0 #050505,-3px 3px 0 #050505,3px -3px 0 #050505,-3px -3px 0 #050505;
     background:rgba(0,0,0,.34);border:1px dashed rgba(255,255,255,.55);border-radius:8px;padding:8px;word-break:break-word}
   .cover-resize{position:absolute;right:3px;bottom:3px;width:14px;height:14px;border-right:3px solid rgba(255,255,255,.85);
@@ -191,26 +225,51 @@
 </head>
 <body>
 <div class="wrap">
-  <h1>🎬 AI 视频自动化 · 流水线</h1>
-  <p class="sub">六步生产线，每步可单独配置 / 运行 / 看进度与日志，也可「一键运行」按配置自动走完全程。</p>
+  <div class="head">
+    <div class="head-main">
+      <h1>🎬 AI 视频自动化 · 流水线</h1>
+      <p class="sub">六步生产线，每步可单独配置 / 运行 / 看进度与日志，也可「一键运行」按配置自动走完全程。</p>
+    </div>
+    <div class="gpu" id="gpu-box">
+      <div class="gpu-top"><span class="gpu-name" id="gpu-name">GPU 状态</span><span id="gpu-time">--</span></div>
+      <div class="gpu-grid">
+        <span>占用 <b id="gpu-util">--</b></span><span>显存 <b id="gpu-mem">--</b></span>
+        <span>温度 <b id="gpu-temp">--</b></span><span>功耗 <b id="gpu-power">--</b></span>
+      </div>
+      <div class="gpu-bar"><i id="gpu-bar"></i></div>
+    </div>
+  </div>
 
   <div class="app">
-    <aside class="queue-panel">
-      <div class="qhead">
-        <div>
-          <div class="qtitle">视频队列</div>
-          <div class="qsum" id="qsum">0 个任务</div>
+    <aside class="side">
+      <section class="queue-panel">
+        <div class="qhead">
+          <div>
+            <div class="qtitle">视频队列</div>
+            <div class="qsum" id="qsum">0 个任务</div>
+          </div>
         </div>
-      </div>
-      <label>添加链接（可一次粘贴多行）</label>
-      <textarea id="queue-links" class="qinput" placeholder="https://...&#10;https://..."></textarea>
-      <div class="qactions">
-        <button class="btn" onclick="addQueueLinks()">添加</button>
-        <button class="btn" id="runqueue" onclick="runQueue()">按顺序运行</button>
-        <button class="btn ghost" id="stopqueue" onclick="stopQueue()">停止排队</button>
-      </div>
-      <div class="hint">点击队列项查看步骤详情；完成后可打开输出文件夹。</div>
-      <div class="qlist" id="queue-list"></div>
+        <label>添加链接（可一次粘贴多行）</label>
+        <textarea id="queue-links" class="qinput" placeholder="https://...&#10;https://..."></textarea>
+        <div class="qactions">
+          <button class="btn" onclick="addQueueLinks()">添加</button>
+          <button class="btn" id="runqueue" onclick="runQueue()">按顺序运行</button>
+          <button class="btn ghost" id="pausequeue" onclick="pauseQueue()">暂停</button>
+          <button class="btn ghost" id="stopqueue" onclick="stopQueue()">停止</button>
+          <button class="btn ghost" id="resumequeue" onclick="resumeQueue()">继续</button>
+        </div>
+        <div class="hint">点击队列项查看步骤详情；完成后可打开输出文件夹。</div>
+        <div class="qlist" id="queue-list"></div>
+      </section>
+
+      <section class="archive-panel">
+        <div class="archive-head">
+          <div class="archive-title">归档列表</div>
+          <div class="archive-count" id="archive-count">0 个归档</div>
+        </div>
+        <div class="hint">这里只保存已上传的发表记录；点击任务里的“已上传”后会移入这里。</div>
+        <div class="archive-list" id="archive-list"></div>
+      </section>
     </aside>
 
     <main class="main">
@@ -230,7 +289,7 @@
 
 <script>
 const API="";
-let JOB=null,CFG=null,ST=null,QST=null,prev={},dlFile=null,coverFile=null,coverImgUrl="",srcMode="link",jobES=null,queueES=null;
+let JOB=null,CFG=null,ST=null,QST=null,ARCHIVES=[],prev={},dlFile=null,coverFile=null,coverImgUrl="",srcMode="link",jobES=null,queueES=null;
 const logOpen=new Set(), pvOpen=new Set();
 
 const STEPS=[
@@ -242,7 +301,7 @@ const BADGE={pending:"待运行",running:"进行中",done:"已完成",error:"出
 async function init(){
   CFG=await (await fetch(API+"/api/config")).json();
   JOB=(await (await fetch(API+"/api/jobs",{method:"POST"})).json()).job_id;
-  buildStrip(); buildCards(); openSSE(); openQueueSSE(); startSampleWarmup();
+  buildStrip(); buildCards(); openSSE(); openQueueSSE(); startSampleWarmup(); startGpuStatus(); startArchivePoll();
 }
 function esc(s){return (s||"").replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));}
 function escAttr(s){return esc(s).replace(/"/g,"&quot;");}
@@ -251,11 +310,45 @@ function fmtDur(s){s=Math.max(0,Math.round(+s||0));const h=Math.floor(s/3600),m=
   if(h)return `${h}时${String(m).padStart(2,"0")}分`;
   if(m)return `${m}分${String(x).padStart(2,"0")}秒`;
   return `${x}秒`;}
-function fmtCost(c){if(!c)return "";
-  const cny=+c.cny||0, usd=+c.usd||0, tok=+c.total_tokens||0;
-  const money=cny>=0.01?`¥${cny.toFixed(2)}`:`¥${cny.toFixed(4)}`;
-  return ` · Gemini费用 ${money} / $${usd.toFixed(4)} · ${tok} tokens`;}
+function fmtDate(ts){
+  const n=+ts||0;
+  if(!n)return "--";
+  const d=new Date(n<1e12?n*1000:n);
+  if(Number.isNaN(d.getTime()))return "--";
+  const y=d.getFullYear(),m=String(d.getMonth()+1).padStart(2,"0"),day=String(d.getDate()).padStart(2,"0");
+  return `${y}-${m}-${day}`;
+}
+function fmtSize(bytes){
+  bytes=+bytes||0;
+  if(bytes>=1024*1024*1024)return `${(bytes/1024/1024/1024).toFixed(1)}G`;
+  if(bytes>=1024*1024)return `${(bytes/1024/1024).toFixed(0)}M`;
+  if(bytes>=1024)return `${(bytes/1024).toFixed(0)}K`;
+  return `${bytes}B`;
+}
 function elem(h){const t=document.createElement("template");t.innerHTML=h.trim();return t.content.firstChild;}
+function fmtMem(mb){mb=+mb||0;return mb>=1024?`${(mb/1024).toFixed(1)}G`:`${Math.round(mb)}M`;}
+function setGpuUnavailable(msg){
+  const name=document.getElementById("gpu-name"),util=document.getElementById("gpu-util"),mem=document.getElementById("gpu-mem");
+  const temp=document.getElementById("gpu-temp"),power=document.getElementById("gpu-power"),bar=document.getElementById("gpu-bar"),timeEl=document.getElementById("gpu-time");
+  if(name)name.textContent=msg||"GPU 不可用"; if(util)util.textContent="--"; if(mem)mem.textContent="--";
+  if(temp)temp.textContent="--"; if(power)power.textContent="--"; if(bar)bar.style.width="0%"; if(timeEl)timeEl.textContent="--";
+}
+async function refreshGpuStatus(){
+  try{
+    const d=await (await fetch(`${API}/api/gpu-status`,{cache:"no-store"})).json();
+    if(!d.available||!d.gpus||!d.gpus.length){setGpuUnavailable(d.error||"GPU 不可用");return;}
+    const g=d.gpus[0], memPct=Math.max(0,Math.min(100,+g.memory_pct||0));
+    document.getElementById("gpu-name").textContent=`GPU ${g.index}: ${g.name||"NVIDIA"}`;
+    document.getElementById("gpu-util").textContent=g.util==null?"--":`${Math.round(+g.util)}%`;
+    document.getElementById("gpu-mem").textContent=`${fmtMem(g.memory_used)} / ${fmtMem(g.memory_total)} (${memPct.toFixed(0)}%)`;
+    document.getElementById("gpu-temp").textContent=g.temperature==null?"--":`${Math.round(+g.temperature)}℃`;
+    document.getElementById("gpu-power").textContent=g.power_draw==null?"--":
+      (g.power_limit==null?`${(+g.power_draw).toFixed(0)}W`:`${(+g.power_draw).toFixed(0)} / ${(+g.power_limit).toFixed(0)}W`);
+    document.getElementById("gpu-bar").style.width=`${memPct}%`;
+    document.getElementById("gpu-time").textContent=new Date().toLocaleTimeString("zh-CN",{hour12:false});
+  }catch(_){setGpuUnavailable("GPU 状态读取失败");}
+}
+function startGpuStatus(){refreshGpuStatus();setInterval(refreshGpuStatus,2000);}
 
 // ---------- 顶部产线状态 ----------
 function buildStrip(){
@@ -277,7 +370,7 @@ function buildCards(){
       <div class="hbar"><i id="hb-${st.key}"></i></div>
       <div class="chead">
         <div class="ring" id="rg-${st.key}"><span class="ico" id="ic-${st.key}">${i+1}</span></div>
-        <div class="ctit"><div class="cnm">${st.name}</div><div class="pill" id="pl-${st.key}">待运行</div><div class="est" id="est-${st.key}">预计 --</div></div></div>
+        <div class="ctit"><div class="cnm">${st.name}</div><div class="pill" id="pl-${st.key}">待运行</div><div class="est" id="est-${st.key}"></div></div></div>
       <div class="body">
         <div id="cfg-${st.key}"></div>
         <div class="step-actions">
@@ -334,6 +427,8 @@ function onTtsEngineChange(){
   renderVoiceOptions();
   const tip=document.getElementById("tts-engine-tip");
   if(tip)tip.innerHTML=(e&&!e.available)?('⚠ 暂不可用：'+esc(e.hint||"该引擎未就绪")):"";
+  const f5Box=document.getElementById("f5-parallel-box");
+  if(f5Box)f5Box.classList.toggle("hide",curTtsEngineKey()!=="f5");
   refreshCurrentEngineSampleStatus();
 }
 function getSpeed(){const s=document.getElementById("tts-speed");return s?(+s.value).toFixed(2):"1.00";}
@@ -342,6 +437,10 @@ function speedOptions(){
   let best=opts[0], diff=Infinity;
   opts.forEach(x=>{const d=Math.abs(x-cur);if(d<diff){best=x;diff=d;}});
   return opts.map(x=>`<option value="${x.toFixed(2)}" ${x===best?"selected":""}>${x.toFixed(2)}x</option>`).join("");
+}
+function f5ParallelOptions(){
+  const cur=Math.max(1,Math.min(4,+(CFG.f5_parallel_default||2)));
+  return [1,2,3,4].map(x=>`<option value="${x}" ${x===cur?"selected":""}>${x} 条</option>`).join("");
 }
 let warmupTimer=null;
 function setWarmup(d){
@@ -421,14 +520,20 @@ function cfgHtml(key){
         <select id="tts-speed" style="flex:0 0 106px;height:43px">${speedOptions()}</select>
         <button class="btn ghost" style="flex:0 0 auto;margin-top:0" onclick="sample(event)">🔊 试听</button>
       </div>
-      <div class="hint">试听会按所选倍速播放；正式生成时也使用同一个倍速。段间停顿用默认值。</div>`;
+      <div id="f5-parallel-box" style="max-width:420px">
+        <label>一次运行</label>
+        <select id="f5-parallel">${f5ParallelOptions()}</select>
+        <div class="hint">F5 字幕段并发数；默认 2，显存够可试 3/4，出错或显存紧张就降回 2。</div>
+      </div>
+      <div class="hint">试听会按所选倍速播放；正式生成时 F5 先按 1.00x 推理，再自动输出同一倍速的最终音轨给第 5 步。</div>`;
   if(key==="compose")return `
-      <label>底图模式</label>
-      <span class="radio"><input type="radio" name="cmode" value="original" checked> 原视频画面</span>
-      <span class="radio"><input type="radio" name="cmode" value="image"> 图片合成（纯色背景）</span>
-      <div id="img-opts" class="hide"><div class="rowf" style="max-width:560px">
-        <div><label>背景色(上)</label><input type="color" id="cm-bg" value="#1a2150" style="height:44px;padding:4px"></div>
-        <div><label>背景色(下)</label><input type="color" id="cm-bg2" value="#3a2a6a" style="height:44px;padding:4px"></div></div></div>
+      <label>配音二次变速</label>
+      <div class="audio-speed-row">
+        <select id="cm-audio-speed" onchange="updateComposeAudioSpeed()">${speedOptions()}</select>
+        <div class="audio-shell"><audio id="cm-audio-preview" controls preload="metadata"></audio></div>
+      </div>
+      <div class="hint" id="cm-audio-preview-hint">加载第 4 步生成的配音，播放器会按当前倍速试听。</div>
+      <div class="hint">执行第 5 步时才会对 wav 原地变速；字幕时间会同步缩放。默认 1.00x，不会重新生成配音。</div>
       <label>字幕样式（为灵性/情感/荣格心理学预设，选一个即可）</label>
       <select id="cm-preset" style="max-width:420px" onchange="applySubPresetDefaults()">
         ${CFG.sub_presets.map(p=>`<option value="${p.key}" ${p.key===CFG.sub_preset_default?"selected":""}>${p.name}</option>`).join("")}</select>
@@ -455,10 +560,10 @@ function cfgHtml(key){
         <div><label>封面标题（留空则自动生成）</label><input type="text" id="cover-title-input" placeholder="自动生成封面标题" oninput="updateCoverPreviewText()"></div>
       </div>
       <div class="rowf" style="max-width:560px;flex-wrap:nowrap">
-        <div style="min-width:0"><label>字号 <span id="cover-font-val">132</span></label><input type="range" id="cover-font" min="64" max="220" step="4" value="132" style="width:100%" oninput="updateCoverPreviewStyle()"></div>
-        <div style="min-width:0"><label>标题宽度 <span id="cover-width-val">62%</span></label><input type="range" id="cover-width" min="25" max="90" step="1" value="62" style="width:100%" oninput="updateCoverPreviewStyle()"></div>
+        <div style="min-width:0"><label>字号 <span id="cover-font-val">112</span></label><input type="range" id="cover-font" min="64" max="220" step="4" value="112" style="width:100%" oninput="updateCoverPreviewStyle()"></div>
+        <div style="min-width:0"><label>标题宽度 <span id="cover-width-val">53%</span></label><input type="range" id="cover-width" min="25" max="90" step="1" value="53" style="width:100%" oninput="updateCoverPreviewStyle()"></div>
       </div>
-      <div class="hint">拖动封面标题调整位置；第 6 步会用上传底图叠加生成的标题并归档。</div>`;
+      <div class="hint">默认使用项目内“01_荣格心理学.png”；拖动封面标题调整位置，手动选择文件可覆盖默认底图。</div>`;
   return "";
 }
 
@@ -476,13 +581,13 @@ function wireDownload(){
   drop.addEventListener("drop",ev=>{if(ev.dataTransfer.files[0]){dlFile=ev.dataTransfer.files[0];document.getElementById("fn").textContent=dlFile.name;}});
 }
 function wireCompose(){
-  document.querySelectorAll('input[name=cmode]').forEach(r=>r.onchange=()=>{
-    document.getElementById("img-opts").classList.toggle("hide",document.querySelector('input[name=cmode]:checked').value!=="image");});
   applySubPresetDefaults();
+  updateComposeAudioPreview(true);
 }
 function wireCoverEditor(){
   const file=document.getElementById("cover-file"),img=document.getElementById("cover-img"),box=document.getElementById("cover-title-box"),editor=document.getElementById("cover-editor"),handle=document.getElementById("cover-resize");
   if(!file||!img||!box||!editor)return;
+  if(CFG.default_cover_available)img.src=`${API}/api/default-cover.png?t=${Date.now()}`;
   file.onchange=()=>{const f=file.files&&file.files[0];if(!f)return;coverFile=f;if(coverImgUrl)URL.revokeObjectURL(coverImgUrl);
     coverImgUrl=URL.createObjectURL(f);img.src=coverImgUrl;};
   let drag=null,resize=null;
@@ -515,7 +620,7 @@ function updateCoverPreviewText(){
 function updateCoverPreviewStyle(){
   const box=document.getElementById("cover-title-box"),font=document.getElementById("cover-font"),w=document.getElementById("cover-width");
   if(!box)return;
-  const fs=+(font&&font.value||132), width=+(w&&w.value||62);
+  const fs=+(font&&font.value||112), width=+(w&&w.value||53);
   box.style.fontSize=Math.max(18,fs/1920*520)+"px";
   box.style.width=width+"%";
   const fv=document.getElementById("cover-font-val"),wv=document.getElementById("cover-width-val");
@@ -550,26 +655,52 @@ function updateSubPreview(){
   box.style.alignItems={bottom:"flex-end",middle:"center",top:"flex-start"}[s.position]||"flex-end";
   const fv=document.getElementById("cm-fontsize-val");if(fv)fv.textContent=String(Math.round(s.fontsize));
 }
+function updateComposeAudioSpeed(){
+  const audio=document.getElementById("cm-audio-preview");
+  const sel=document.getElementById("cm-audio-speed");
+  if(!audio||!sel)return;
+  const rate=Math.max(0.5,Math.min(2.0,+sel.value||1));
+  audio.playbackRate=rate;
+  audio.preservesPitch=true;
+  audio.mozPreservesPitch=true;
+  audio.webkitPreservesPitch=true;
+  const hint=document.getElementById("cm-audio-preview-hint");
+  if(hint)hint.textContent=`正在按 ${rate.toFixed(2)}x 试听第 4 步配音。`;
+}
+function updateComposeAudioPreview(force=false){
+  const audio=document.getElementById("cm-audio-preview");
+  const hint=document.getElementById("cm-audio-preview-hint");
+  if(!audio||!JOB)return;
+  if(force||audio.dataset.job!==JOB){
+    audio.dataset.job=JOB;
+    audio.src=`${API}/api/jobs/${JOB}/dub.wav?t=${Date.now()}`;
+    if(hint)hint.textContent="加载第 4 步生成的配音，播放器会按当前倍速试听。";
+  }
+  audio.onerror=()=>{if(hint)hint.textContent="第 4 步配音生成后，这里会加载声音用于变速试听。";};
+  audio.oncanplay=()=>updateComposeAudioSpeed();
+  updateComposeAudioSpeed();
+}
 
 // ---------- 收集配置 ----------
 function collect(step,forceTts){const g=id=>document.getElementById(id);
   if(step==="download")return {url:(g("dl-url")||{}).value?.trim()||"",media:(document.querySelector('input[name=media]:checked')||{}).value||"video"};
   if(step==="asr")return {model:g("asr-model").value,language:g("asr-lang").value};
   if(step==="translate")return {engine:g("tr-engine").value};
-  if(step==="tts")return {engine:(g("tts-engine")||{}).value||CFG.tts_engine_default,voice:g("tts-voice").value,speed:g("tts-speed").value,force:!!forceTts};
-  if(step==="compose")return {mode:(document.querySelector('input[name=cmode]:checked')||{}).value||"original",
-    bg:g("cm-bg")?.value,bg2:g("cm-bg2")?.value,preset:g("cm-preset").value,
+  if(step==="tts")return {engine:(g("tts-engine")||{}).value||CFG.tts_engine_default,voice:g("tts-voice").value,
+    speed:g("tts-speed").value,f5_parallel:+(g("f5-parallel")?.value||CFG.f5_parallel_default||2),force:!!forceTts};
+  if(step==="compose")return {mode:"original",audio_speed:g("cm-audio-speed")?.value||"1.00",
+    preset:g("cm-preset").value,
     fontsize:+(g("cm-fontsize")?.value||0),position:g("cm-position")?.value||"",
     bilingual:g("cm-bi").checked,burn:g("cm-burn").checked};
   if(step==="publish"){
     const box=g("cover-title-box"),ed=g("cover-editor");
-    const x=box&&ed?(box.offsetLeft/Math.max(ed.clientWidth,1)):0.07;
+    const x=box&&ed?(box.offsetLeft/Math.max(ed.clientWidth,1)):0.47;
     const y=box&&ed?(box.offsetTop/Math.max(ed.clientHeight,1)):0.10;
     return {platform:g("pb-platform").value,mode:"archive",
       cover_title:(g("cover-title-input")||{}).value||"",
       cover_x:x,cover_y:y,
-      cover_font_size:+((g("cover-font")||{}).value||132),
-      cover_width:+((g("cover-width")||{}).value||62)/100};}
+      cover_font_size:+((g("cover-font")||{}).value||112),
+      cover_width:+((g("cover-width")||{}).value||53)/100};}
   return {};}
 function collectAll(){
   const cfgs={};STEPS.forEach(s=>cfgs[s.key]=collect(s.key,s.key==="tts"));
@@ -597,7 +728,22 @@ async function runQueue(){
 }
 
 async function stopQueue(){
-  await fetch(`${API}/api/queue/stop`,{method:"POST"});
+  const r=await fetch(`${API}/api/queue/stop`,{method:"POST"});
+  if(!r.ok)alert((await r.json().catch(()=>({}))).detail||"停止失败");
+}
+
+async function pauseQueue(){
+  const r=await fetch(`${API}/api/queue/pause`,{method:"POST"});
+  if(!r.ok){
+    const fallback=await fetch(`${API}/api/queue/stop`,{method:"POST"});
+    if(!fallback.ok)alert((await fallback.json().catch(()=>({}))).detail||"暂停失败");
+  }
+}
+
+async function resumeQueue(){
+  const cfgs=collectAll();
+  const r=await fetch(`${API}/api/queue/resume`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({configs:cfgs})});
+  if(!r.ok)alert((await r.json().catch(()=>({}))).detail||"继续失败");
 }
 
 async function deleteQueueItem(id,ev){
@@ -623,6 +769,35 @@ async function openOutput(id,ev){
   if(!r.ok)alert((await r.json().catch(()=>({}))).detail||"打开失败");
 }
 
+async function markUploaded(id,ev){
+  ev.stopPropagation();
+  if(!confirm("确认这个视频已经上传？确认后会清空该项目 cache 中的中间文件，只保留发布所需文件。"))return;
+  const r=await fetch(`${API}/api/queue/items/${id}/mark-uploaded`,{method:"POST"});
+  if(!r.ok){alert((await r.json().catch(()=>({}))).detail||"标记失败");return;}
+  await refreshQueue();
+  await refreshArchives();
+}
+
+async function openArchive(encoded,ev){
+  ev.stopPropagation();
+  const archive_dir=decodeURIComponent(encoded);
+  const r=await fetch(`${API}/api/archives/open`,{
+    method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({archive_dir})
+  });
+  if(!r.ok)alert((await r.json().catch(()=>({}))).detail||"打开失败");
+}
+
+async function markArchiveUploaded(encoded,ev){
+  ev.stopPropagation();
+  const archive_dir=decodeURIComponent(encoded);
+  if(!confirm("确认这个归档已经上传？确认后会清空该项目 cache 中的中间文件。"))return;
+  const r=await fetch(`${API}/api/archives/mark-uploaded`,{
+    method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({archive_dir})
+  });
+  if(!r.ok){alert((await r.json().catch(()=>({}))).detail||"标记失败");return;}
+  await refreshArchives();
+}
+
 async function loadStateOnce(jobId){
   try{
     const r=await fetch(`${API}/api/jobs/${jobId}/state`);
@@ -635,13 +810,14 @@ async function loadStateOnce(jobId){
 function selectJob(jobId){
   if(!jobId)return;
   const changed=jobId!==JOB;
-  if(!changed){syncSelectedQueueUrl();renderQueue();loadStateOnce(jobId);return;}
+  if(!changed){syncSelectedQueueUrl();renderQueue();updateComposeAudioPreview();loadStateOnce(jobId);return;}
   const reopen=[...pvOpen];               // 记住切换前展开的预览
   JOB=jobId;
   ST=null; prev={}; pvOpen.clear(); logOpen.clear();
   resetPreviews();                        // 清掉上一队列项残留的缓存内容
   openSSE();
   syncSelectedQueueUrl();
+  updateComposeAudioPreview(true);
   renderQueue();
   loadStateOnce(jobId).then(()=>{         // 状态就绪后，按新队列项重新加载缓存
     if(JOB!==jobId||!ST)return;
@@ -715,6 +891,13 @@ function openQueueSSE(){
   queueES.onmessage=ev=>{QST=JSON.parse(ev.data);renderQueue();};
 }
 
+async function refreshQueue(){
+  try{
+    QST=await (await fetch(`${API}/api/queue`,{cache:"no-store"})).json();
+    renderQueue();
+  }catch(_){}
+}
+
 const QSTATUS={pending:"待执行",running:"执行中",done:"已完成",error:"出错"};
 function itemProgress(item){
   const steps=STEPS.map(s=>s.key);
@@ -736,31 +919,68 @@ function renderQueue(){
   const items=QST.items||[];
   const pending=items.filter(x=>x.status==="pending").length;
   const done=items.filter(x=>x.status==="done").length;
-  const running=items.find(x=>x.status==="running");
-  sum.textContent=`${items.length} 个任务 · ${done} 完成 · ${pending} 待执行`;
-  document.getElementById("runqueue").disabled=!!QST.running||!items.length;
-  document.getElementById("stopqueue").disabled=!QST.running;
+  const canContinue=items.some(x=>x.status==="pending"||x.status==="error");
+  const active=!!QST.running||items.some(x=>x.status==="running")||!!(ST&&ST.running);
+  sum.textContent=`${items.length} 个任务 · ${done} 完成 · ${pending} 待执行${QST.paused?" · 已暂停":""}`;
+  document.getElementById("runqueue").disabled=active||!canContinue;
+  document.getElementById("pausequeue").disabled=!active||!!QST.paused;
+  document.getElementById("stopqueue").disabled=!active;
+  document.getElementById("resumequeue").disabled=active||!canContinue;
   if(items.length&&!items.some(x=>x.job_id===JOB))selectJob(items[0].job_id);
-  if(running&&running.job_id!==JOB)selectJob(running.job_id);
   syncSelectedQueueUrl();
   if(!items.length){list.innerHTML='<div class="hint">还没有队列任务。</div>';return;}
   list.innerHTML=items.map((it,i)=>{
     const name=esc(it.title||it.url);
     const dur=it.estimate&&it.estimate.duration_sec?fmtDur(it.estimate.duration_sec):"--";
-    const rem=it.status==="done"?"0秒":fmtDur((it.estimate||{}).remaining_sec||0);
-    const total=fmtDur((it.estimate||{}).total_sec||0);
     const current=it.current_step?`当前：${esc((STEPS.find(s=>s.key===it.current_step)||{}).name||it.current_step)}`:(it.error?esc(it.error):"");
     const pct=itemProgress(it);
     return `<div class="qitem ${it.status} ${it.job_id===JOB?"active":""}" onclick="selectJob('${it.job_id}')">
       <div class="qtop"><div class="qidx">${i+1}</div><div class="qname">${name}</div><div class="qstatus">${QSTATUS[it.status]||it.status}</div></div>
-      <div class="qmeta"><div>时长 ${dur}</div><div>预计 ${total}</div><div>已用 ${fmtDur(it.elapsed_sec||0)}</div><div>剩余 ${rem}</div></div>
+      <div class="qmeta"><div>时长 ${dur}</div><div>生成时间 ${fmtDate(it.ended_at||it.created_at)}</div></div>
       ${current?`<div class="hint">${current}</div>`:""}
       <div class="qbar"><i style="width:${pct}%"></i></div>
       <div class="qtools">
-        <button class="qtool" onclick="moveQueueItem('${it.id}',-1,event)" ${i===0||QST.running?"disabled":""}>上移</button>
-        <button class="qtool" onclick="moveQueueItem('${it.id}',1,event)" ${i===items.length-1||QST.running?"disabled":""}>下移</button>
+        <button class="qtool" onclick="moveQueueItem('${it.id}',-1,event)" ${i===0||active?"disabled":""}>上移</button>
+        <button class="qtool" onclick="moveQueueItem('${it.id}',1,event)" ${i===items.length-1||active?"disabled":""}>下移</button>
         <button class="qtool" onclick="deleteQueueItem('${it.id}',event)" ${it.status==="running"?"disabled":""}>删除</button>
         <button class="qtool" onclick="openOutput('${it.id}',event)" ${it.status!=="done"?"disabled":""}>打开输出</button>
+        <button class="qtool ${it.uploaded?"uploaded":""}" onclick="markUploaded('${it.id}',event)" ${it.status!=="done"||it.uploaded?"disabled":""}>${it.uploaded?"已上传✓":"已上传"}</button>
+      </div>
+    </div>`;
+  }).join("");
+}
+
+async function refreshArchives(){
+  try{
+    const d=await (await fetch(`${API}/api/archives`,{cache:"no-store"})).json();
+    ARCHIVES=d.items||[];
+    renderArchives();
+  }catch(_){}
+}
+
+function startArchivePoll(){
+  refreshArchives();
+  setInterval(refreshArchives,5000);
+}
+
+function renderArchives(){
+  const list=document.getElementById("archive-list"),count=document.getElementById("archive-count");
+  if(!list)return;
+  const items=ARCHIVES||[];
+  if(count){
+    count.textContent=`${items.length} 个已上传`;
+  }
+  if(!items.length){list.innerHTML='<div class="hint">还没有上传归档。</div>';return;}
+  list.innerHTML=items.map(ar=>{
+    const enc=encodeURIComponent(ar.archive_dir||"");
+    return `<div class="archive-item ${ar.uploaded?"uploaded":""}">
+      <div class="archive-row">
+        <div class="archive-name">${esc(ar.title||ar.full_title||ar.archive_dir)}</div>
+        <div class="archive-tag">已上传</div>
+      </div>
+      <div class="archive-meta">时长 ${fmtDur(ar.duration_sec||0)} · 生成时间 ${fmtDate(ar.created_at)}</div>
+      <div class="qtools">
+        <button class="qtool" onclick="openArchive('${enc}',event)">打开输出</button>
       </div>
     </div>`;
   }).join("");
@@ -780,9 +1000,7 @@ function apply(){
     document.getElementById("pl-"+k).textContent=BADGE[info.status];
     const est=document.getElementById("est-"+k);
     if(est){
-      const elapsed=info.elapsed_sec?` · 已用 ${fmtDur(info.elapsed_sec)}`:"";
-      const cost=k==="tts"?fmtCost((info.result||{}).gemini_cost):"";
-      est.textContent=`预计 ${fmtDur(info.estimate_sec||0)}${elapsed}${cost}`;
+      est.textContent=info.elapsed_sec?`已用 ${fmtDur(info.elapsed_sec)}`:"";
     }
     const rb=document.getElementById("rb-"+k);
     if(rb)rb.disabled=!!ST.running||!prevDone;
@@ -813,6 +1031,7 @@ function apply(){
       if(info.status==="done"&&nb==="done")sc.classList.add("done");
       else if(info.status==="done"&&(nb==="running"||nb==="pending"))sc.classList.add("flow");}
     if(info.status==="done")document.getElementById("ptg-"+k).classList.remove("hide");
+    if(k==="tts"&&info.status==="done"&&prev[k]!=="done")updateComposeAudioPreview(true);
     prev[k]=info.status;
   });
 }
@@ -829,7 +1048,7 @@ async function loadPreview(key, open=false){
   else if(key==="translate"){const d=await (await fetch(`${API}/api/jobs/${JOB}/translation`)).json();
     pv.innerHTML=`<div class="ptitle">翻译结果（${d.segments.length} 段）</div><div class="list">${d.segments.map(s=>`<div class="cue"><span class="tc">${fmt(s.start)}</span><span><div>${esc(s.zh)}</div><div class="en">${esc(s.text)}</div></span></div>`).join("")}</div>`;}
   else if(key==="tts")
-    pv.innerHTML=`<div class="ptitle">配音音轨试听</div><audio controls src="${API}/api/jobs/${JOB}/dub.wav?t=${Date.now()}"></audio>`;
+    pv.innerHTML=`<div class="ptitle">配音音轨试听</div><div class="audio-shell"><audio controls preload="metadata" src="${API}/api/jobs/${JOB}/dub.wav?t=${Date.now()}"></audio></div>`;
   else if(key==="compose")
     pv.innerHTML=`<div class="ptitle">成片预览</div><video controls src="${API}/api/jobs/${JOB}/video.mp4?t=${Date.now()}"></video>
       <div><a class="dl" href="${API}/api/jobs/${JOB}/video.mp4?download=true">⬇ 下载 MP4</a>

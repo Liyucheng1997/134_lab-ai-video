@@ -85,7 +85,7 @@ def download(url: str, work_dir: Path) -> tuple[Path, Path]:
     if not video.exists():
         log("download", f"下载视频：{url}")
         _ytdlp_stream([
-            config.YT_DLP, "--no-playlist", "--newline",
+            *config.YT_DLP, "--no-playlist", "--newline",
             "-f", "bv*[ext=mp4][height<=1080]+ba[ext=m4a]/b[ext=mp4]/b",
             "--merge-output-format", "mp4",
             "--ffmpeg-location", str(Path(config.FFMPEG).parent),

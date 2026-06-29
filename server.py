@@ -40,6 +40,9 @@ _BILI_LOGINS: dict[str, dict] = {}
 _QUEUE: list[dict] = []
 _QUEUE_RUNNING = False
 _QUEUE_STOP = False
+_QUEUE_PAUSED = False
+_CURRENT_PROC: subprocess.Popen | None = None
+_CURRENT_PROC_INFO: dict = {}
 _LOCK = threading.Lock()
 _RUN_LOCK = threading.Lock()
 _JOB_DIRS_WRITE_LOCK = threading.Lock()
@@ -110,8 +113,8 @@ def _safe_dir_part(text: str, fallback: str = "待处理视频") -> str:
 
 
 def _next_project_dir(theme: str = "待处理视频") -> Path:
-    stamp = time.strftime("%Y%m%d")
-    base = config.OUTPUT_DIR / f"{stamp}_{_safe_dir_part(theme)}"
+    stamp = time.strftime("%Y%m%d_%H%M%S")
+    base = config.OUTPUT_DIR / stamp
     project_dir = base
     suffix = 2
     while project_dir.exists():
@@ -129,33 +132,29 @@ def _theme_from_text(text: str) -> str:
     return "待处理视频"
 
 
-def _rename_pending_project(item: dict, title: str) -> None:
+def _rewrite_archive_paths(project: Path, old_project: Path) -> None:
+    old = str(old_project)
+    new = str(project)
+    for path in (project / "metadata.json",
+                 project / "cache" / "publish" / "metadata.json",
+                 project / "cache" / "publish.result.json"):
+        data = load_json(path)
+        if not isinstance(data, dict):
+            continue
+        for key, value in list(data.items()):
+            if isinstance(value, str) and old in value:
+                data[key] = value.replace(old, new)
+        data["archive_dir"] = new
+        if (project / "video.mp4").exists():
+            data["video"] = str(project / "video.mp4")
+        if data.get("cover") and (project / "cover.png").exists():
+            data["cover"] = str(project / "cover.png")
+        path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _rename_pending_project(item: dict, title: str, allow_archived: bool = False) -> None:
+    # 项目目录一旦创建就不再跟随标题变化。任务名只用于 UI 展示和 metadata。
     return
-    if item.get("status") != "pending":
-        return
-    theme = _theme_from_text(title)
-    if theme == "待处理视频":
-        return
-    project_value = item.get("project_dir") or item.get("output_dir")
-    if not project_value:
-        return
-    project = Path(project_value)
-    if not project.exists() or (project / "metadata.json").exists():
-        return
-    m = re.match(r"^(\d+)[_-].*_(\d{8})(?:_\d+)?$", project.name)
-    if not m:
-        return
-    base = project.parent / f"{m.group(1)}_{_safe_dir_part(theme)}_{m.group(2)}"
-    target = base
-    suffix = 2
-    while target.exists() and target.resolve() != project.resolve():
-        target = project.parent / f"{base.name}_{suffix:02d}"
-        suffix += 1
-    if target.resolve() != project.resolve():
-        project.rename(target)
-    item["project_dir"] = str(target)
-    item["output_dir"] = str(target)
-    _register_job_project(item["job_id"], target)
 
 
 def _read_job_dirs() -> dict:
@@ -251,6 +250,13 @@ def _delete_job_files(item: dict) -> None:
         _JOBS.pop(job_id, None)
 
 
+def _is_inside(path: Path, root: Path) -> bool:
+    try:
+        return os.path.commonpath([str(path.resolve()), str(root.resolve())]) == str(root.resolve())
+    except (OSError, ValueError):
+        return False
+
+
 def _cfg_for_step(job_id: str, step: str, cfg: dict) -> dict:
     cfg = dict(cfg or {})
     if step == "publish":
@@ -264,7 +270,7 @@ _STEP_OUTPUTS = {
     "download": ["source.mp4", "source.wav", "source.m4a"],
     "asr": ["segments.json"],
     "translate": ["translated.json"],
-    "tts": ["dub.wav", "dub_segments.json"],
+    "tts": ["dub.wav", "dub_segments.json", "dub_speed.json", "compose_audio_speed.json"],
     "compose": ["subs.srt", "subs.vtt", "subs.ass", "cover_title.txt", "cover.png", "final.mp4"],
     "publish": ["publish"],
 }
@@ -272,6 +278,7 @@ _ARCHIVE_OUTPUTS = [
     "video.mp4", "cover.png", "title.txt", "description.txt",
     "tags.txt", "publish_info.md", "metadata.json",
 ]
+_UPLOAD_KEEP_FILES = set(_ARCHIVE_OUTPUTS)
 
 
 def _clear_from_step(job_id: str, start_step: str) -> None:
@@ -315,6 +322,107 @@ def _update_queue_item_for_job(job_id: str, **changes) -> None:
         if "output_dir" in changes and changes["output_dir"]:
             item["project_dir"] = changes["output_dir"]
         _save_queue_state_unlocked()
+
+
+def _rename_queue_project_for_job(job_id: str, title: str) -> str:
+    project = _job_project_dir(job_id)
+    return str(project) if project else ""
+
+
+def _terminate_current_process(reason: str) -> bool:
+    with _LOCK:
+        proc = _CURRENT_PROC
+        info = dict(_CURRENT_PROC_INFO)
+    if not proc or proc.poll() is not None:
+        return False
+    try:
+        proc.terminate()
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+    finally:
+        if info.get("job_id") and info.get("step"):
+            _on_line(info["job_id"], info["step"],
+                     f"[{time.strftime('%H:%M:%S')}] [server] {reason}")
+    return True
+
+
+def _write_archive_meta_files(meta: dict) -> None:
+    archive_dir_value = str(meta.get("archive_dir") or "").strip()
+    if not archive_dir_value:
+        return
+    archive_dir = Path(archive_dir_value)
+    for path in (
+        archive_dir / "metadata.json",
+        archive_dir / "cache" / "publish" / "metadata.json",
+        archive_dir / "cache" / "publish.result.json",
+    ):
+        if path.parent.exists():
+            path.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _clear_archive_cache(archive_dir: Path) -> tuple[int, int]:
+    cache = archive_dir / "cache"
+    if not cache.exists():
+        return 0, 0
+    removed_files = 0
+    freed_bytes = 0
+    for child in list(cache.iterdir()):
+        try:
+            if child.is_dir():
+                for f in child.rglob("*"):
+                    if f.is_file():
+                        removed_files += 1
+                        freed_bytes += f.stat().st_size
+                shutil.rmtree(child, ignore_errors=True)
+            else:
+                removed_files += 1
+                freed_bytes += child.stat().st_size
+                child.unlink(missing_ok=True)
+        except OSError:
+            continue
+    return removed_files, freed_bytes
+
+
+def _mark_archive_uploaded(job_id: str, uploaded: bool = True) -> dict:
+    meta = _remember_archive_meta(job_id)
+    archive_dir_value = str(meta.get("archive_dir") or "").strip()
+    if not archive_dir_value:
+        project = _job_project_dir(job_id)
+        if project:
+            meta = load_json(project / "metadata.json") or meta
+            archive_dir_value = str(meta.get("archive_dir") or project)
+    if not archive_dir_value:
+        raise HTTPException(404, "没有找到归档目录")
+    archive_dir = Path(archive_dir_value)
+    if not archive_dir.exists():
+        raise HTTPException(404, "归档目录不存在")
+
+    meta = load_json(archive_dir / "metadata.json") or meta or {}
+    meta["archive_dir"] = str(archive_dir)
+    if (archive_dir / "video.mp4").exists():
+        meta["video"] = str(archive_dir / "video.mp4")
+    if (archive_dir / "cover.png").exists():
+        meta["cover"] = str(archive_dir / "cover.png")
+    meta["uploaded"] = bool(uploaded)
+    meta["uploaded_at"] = time.strftime("%Y-%m-%dT%H:%M:%S") if uploaded else ""
+    _write_archive_meta_files(meta)
+    removed_files = freed_bytes = 0
+    if uploaded:
+        removed_files, freed_bytes = _clear_archive_cache(archive_dir)
+    _remember_archive_meta(job_id, meta)
+    with _LOCK:
+        j = _JOBS.setdefault(job_id, _default_job_state())
+        j["cleaned"] = bool(uploaded)
+        j["archive_meta"] = dict(meta)
+    return {
+        "ok": True,
+        "uploaded": bool(uploaded),
+        "archive_dir": str(archive_dir),
+        "removed_files": removed_files,
+        "freed_bytes": freed_bytes,
+    }
 
 
 def _remember_archive_meta(job_id: str, meta: dict | None = None) -> dict:
@@ -409,16 +517,28 @@ def _normalize_queue_item(item: dict, order: int) -> dict:
         out["error"] = "服务重启中断，已恢复为待执行"
         out["started_at"] = None
         out["ended_at"] = None
+    if out["title"] and out["status"] == "pending":
+        _rename_pending_project(out, out["title"])
     if out["project_dir"]:
         _register_job_project(out["job_id"], out["project_dir"])
-    if out["status"] == "done" and out["output_dir"]:
-        meta = load_json(Path(out["output_dir"]) / "metadata.json") or {}
-        if meta:
-            _remember_archive_meta(out["job_id"], meta)
-            with _LOCK:
-                j = _JOBS.setdefault(out["job_id"], _default_job_state())
-                j["cleaned"] = True
-                j["archive_meta"] = dict(meta)
+    archive_dir = Path(out["output_dir"] or out["project_dir"]) if (out["output_dir"] or out["project_dir"]) else None
+    meta = load_json(archive_dir / "metadata.json") if archive_dir else None
+    if meta and (archive_dir / "video.mp4").exists():
+        out["status"] = "done"
+        out["error"] = None
+        out["ended_at"] = out.get("ended_at") or archive_dir.stat().st_mtime
+        project_title = meta.get("project_title") or out.get("title") or meta.get("title", "")
+        if project_title:
+            _rename_pending_project(out, project_title, allow_archived=True)
+            archive_dir = Path(out["output_dir"])
+            meta = load_json(archive_dir / "metadata.json") or meta
+        _remember_archive_meta(out["job_id"], meta)
+        with _LOCK:
+            j = _JOBS.setdefault(out["job_id"], _default_job_state())
+            j["cleaned"] = True
+            j["archive_meta"] = dict(meta)
+        if meta.get("uploaded"):
+            out["_archived_uploaded"] = True
     return out
 
 
@@ -460,7 +580,13 @@ def _load_queue_state() -> None:
     data = load_json(state_file) or {}
     raw_items = data.get("items") if isinstance(data, dict) else []
     if isinstance(raw_items, list):
-        restored = [_normalize_queue_item(x, i) for i, x in enumerate(raw_items) if isinstance(x, dict)]
+        for i, raw in enumerate(raw_items):
+            if not isinstance(raw, dict):
+                continue
+            item = _normalize_queue_item(raw, i)
+            if item.get("_archived_uploaded"):
+                continue
+            restored.append(item)
 
     if not QUEUE_STATE_FILE.exists():
         seen_outputs = {str(x.get("output_dir") or "").lower() for x in restored if x.get("output_dir")}
@@ -559,6 +685,7 @@ def _on_line(job_id: str, step: str, line: str):
 
 def _run_one(job_id: str, step: str, cfg: dict) -> int:
     """跑一步（不加锁）。返回退出码。调用方负责 _RUN_LOCK 与 current/running 状态。"""
+    global _CURRENT_PROC, _CURRENT_PROC_INFO
     j = _job(job_id)
     cfg = _cfg_for_step(job_id, step, cfg)
     wd = work_dir_of(job_id)
@@ -579,16 +706,29 @@ def _run_one(job_id: str, step: str, cfg: dict) -> int:
     proc = subprocess.Popen(cmd, cwd=str(config.BASE_DIR), env=env,
                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                             text=True, encoding="utf-8", errors="replace", bufsize=1)
+    with _LOCK:
+        _CURRENT_PROC = proc
+        _CURRENT_PROC_INFO = {"job_id": job_id, "step": step}
     tail = []
-    for line in proc.stdout:
-        line = line.rstrip("\n")
-        if line:
-            tail.append(line); tail[:] = tail[-30:]
-            _on_line(job_id, step, line)
-    code = proc.wait()
+    try:
+        for line in proc.stdout:
+            line = line.rstrip("\n")
+            if line:
+                tail.append(line); tail[:] = tail[-30:]
+                _on_line(job_id, step, line)
+        code = proc.wait()
+    finally:
+        with _LOCK:
+            if _CURRENT_PROC is proc:
+                _CURRENT_PROC = None
+                _CURRENT_PROC_INFO = {}
     if not (code == 0 and _artifact_done(job_id, step)):
-        msg = next((t for t in reversed(tail) if "失败" in t or "Error" in t),
-                   f"步骤异常退出（{code}）")
+        with _LOCK:
+            stopped = _QUEUE_STOP
+            paused = _QUEUE_PAUSED
+        msg = "已暂停，可继续" if paused else "已停止，可继续" if stopped else next(
+            (t for t in reversed(tail) if "失败" in t or "Error" in t),
+            f"步骤异常退出（{code}）")
         with _LOCK:
             j["run"][step]["error"] = msg
     else:
@@ -722,7 +862,7 @@ def _probe_url_meta(url: str) -> dict:
     """快速探测标题/时长；失败不影响入队。"""
     try:
         proc = subprocess.run(
-            [config.YT_DLP, "--dump-single-json", "--skip-download", "--no-warnings", url],
+            [*config.YT_DLP, "--dump-single-json", "--skip-download", "--no-warnings", url],
             cwd=str(config.BASE_DIR),
             capture_output=True,
             text=True,
@@ -886,7 +1026,12 @@ def _estimate_job(job_id: str, fallback_duration: float | None = None) -> dict:
 def _queue_item_status(item: dict) -> str:
     job_id = item["job_id"]
     j = _job(job_id)
-    if item.get("status") in {"running", "error", "done"}:
+    if item.get("status") == "running":
+        return "running"
+    meta = _remember_archive_meta(job_id)
+    if meta and _archive_file(meta, "video", "video.mp4"):
+        return "done"
+    if item.get("status") in {"error", "done"}:
         return item["status"]
     if any(_artifact_done(job_id, k) for k in _STEP_KEYS):
         if _artifact_done(job_id, "publish"):
@@ -901,11 +1046,14 @@ def _queue_snapshot() -> dict:
         raw = [dict(item) for item in _QUEUE]
         running = _QUEUE_RUNNING
         stop = _QUEUE_STOP
+        paused = _QUEUE_PAUSED
 
     items = []
     for item in raw:
         job_id = item["job_id"]
         meta = _remember_archive_meta(job_id)
+        if meta.get("uploaded"):
+            continue
         est = _estimate_job(job_id, item.get("duration_sec"))
         status = _queue_item_status(item)
         started = item.get("started_at")
@@ -914,17 +1062,66 @@ def _queue_snapshot() -> dict:
         items.append({
             **item,
             "status": status,
+            "uploaded": bool(meta.get("uploaded")),
+            "uploaded_at": meta.get("uploaded_at", ""),
             "current_step": _job(job_id).get("current"),
             "estimate": est,
             "elapsed_sec": round(elapsed),
             "output_dir": meta.get("archive_dir") or item.get("output_dir", ""),
             "project_dir": meta.get("archive_dir") or item.get("project_dir", ""),
         })
-    return {"running": running, "stop_requested": stop, "items": items}
+    return {"running": running, "paused": paused,
+            "stop_requested": stop, "items": items}
+
+
+def _archive_summary(archive_dir: Path, meta: dict, job_id: str = "", item_id: str = "") -> dict:
+    video = archive_dir / "video.mp4"
+    return {
+        "job_id": job_id,
+        "item_id": item_id,
+        "title": meta.get("project_title") or meta.get("title") or archive_dir.name,
+        "full_title": meta.get("title") or "",
+        "archive_dir": str(archive_dir),
+        "created_at": archive_dir.stat().st_mtime,
+        "uploaded": bool(meta.get("uploaded")),
+        "uploaded_at": meta.get("uploaded_at", ""),
+        "has_video": video.exists(),
+        "has_cover": (archive_dir / "cover.png").exists(),
+        "duration_sec": media_duration(video) if video.exists() else 0,
+    }
+
+
+def _archive_list() -> list[dict]:
+    with _LOCK:
+        queue_items = [dict(x) for x in _QUEUE]
+    by_dir: dict[str, dict] = {}
+    for item in queue_items:
+        for value in (item.get("project_dir"), item.get("output_dir")):
+            if not value:
+                continue
+            archive_dir = Path(value)
+            meta = load_json(archive_dir / "metadata.json") or {}
+            if meta and meta.get("uploaded") and (archive_dir / "video.mp4").exists():
+                by_dir[str(archive_dir.resolve()).lower()] = _archive_summary(
+                    archive_dir, meta, item.get("job_id", ""), item.get("id", ""))
+                break
+    for meta_path in config.OUTPUT_DIR.glob("*/metadata.json"):
+        archive_dir = meta_path.parent
+        key = str(archive_dir.resolve()).lower()
+        if key in by_dir:
+            continue
+        meta = load_json(meta_path) or {}
+        if meta and meta.get("uploaded") and (archive_dir / "video.mp4").exists():
+            by_dir[key] = _archive_summary(archive_dir, meta)
+    def sort_key(item: dict):
+        uploaded_at = str(item.get("uploaded_at") or "")
+        return uploaded_at or str(item.get("created_at") or "")
+
+    return sorted(by_dir.values(), key=sort_key, reverse=True)
 
 
 def _run_queue_thread(configs: dict):
-    global _QUEUE_RUNNING, _QUEUE_STOP
+    global _QUEUE_RUNNING, _QUEUE_STOP, _QUEUE_PAUSED
     with _RUN_LOCK:
         with _LOCK:
             _QUEUE_RUNNING = True
@@ -932,7 +1129,7 @@ def _run_queue_thread(configs: dict):
         try:
             while True:
                 with _LOCK:
-                    if _QUEUE_STOP:
+                    if _QUEUE_STOP or _QUEUE_PAUSED:
                         break
                     item = next((x for x in _QUEUE if x.get("status") in {"pending", "error"}), None)
                     if not item:
@@ -947,15 +1144,39 @@ def _run_queue_thread(configs: dict):
                 with _LOCK:
                     j["running"] = True
                 try:
+                    interrupted = ""
                     for key in _STEP_KEYS:
+                        with _LOCK:
+                            if _QUEUE_STOP:
+                                interrupted = "已停止，可继续"
+                                break
+                            if _QUEUE_PAUSED:
+                                interrupted = "已暂停，可继续"
+                                break
                         if _artifact_done(job_id, key):
                             continue
                         cfg = dict(configs.get(key, {}))
                         if key == "download":
                             cfg["url"] = item["url"]
                         code = _run_one(job_id, key, cfg)
+                        with _LOCK:
+                            if _QUEUE_STOP:
+                                interrupted = "已停止，可继续"
+                                break
+                            if _QUEUE_PAUSED:
+                                interrupted = "已暂停，可继续"
+                                break
                         if code != 0 or j["run"][key]["error"]:
                             raise RuntimeError(j["run"][key]["error"] or f"{key} 失败")
+                    if interrupted:
+                        with _LOCK:
+                            item["status"] = "pending"
+                            item["ended_at"] = time.time()
+                            item["error"] = interrupted
+                            _save_queue_state_unlocked()
+                        break
+                    if not all(_artifact_done(job_id, key) for key in _STEP_KEYS):
+                        continue
                     meta = _cleanup_success_cache(job_id)
                     with _LOCK:
                         item["status"] = "done"
@@ -989,6 +1210,7 @@ def _probe_queue_item_thread(item_id: str, url: str):
             if item["id"] == item_id:
                 if meta.get("title"):
                     item["title"] = meta["title"]
+                    _rename_pending_project(item, meta["title"])
                 if meta.get("duration_sec"):
                     item["duration_sec"] = meta["duration_sec"]
                 _save_queue_state_unlocked()
@@ -999,7 +1221,11 @@ def _open_path(path: Path) -> None:
     if not path.exists():
         raise HTTPException(404, "路径不存在")
     if os.name == "nt":
-        os.startfile(str(path))  # type: ignore[attr-defined]
+        target = str(path.resolve())
+        if path.is_dir():
+            subprocess.Popen(["explorer.exe", f"/n,{target}"])
+        else:
+            subprocess.Popen(["explorer.exe", f"/select,{target}"])
     else:
         subprocess.Popen(["xdg-open", str(path)])
 
@@ -1027,14 +1253,70 @@ def get_config():
         "tts_engine_default": cur_engine,
         "voice_default": config.TTS_VOICE,
         "speed_default": config.TTS_SPEED,
+        "f5_parallel_default": config.F5_TTS_PARALLEL,
         "whisper_models": ["small", "large-v3-turbo"],
         "engines": [{"key": "deepseek", "name": "DeepSeek（大模型，质量高）"},
                     {"key": "google", "name": "Google 翻译（免费，快）"}],
         "sub_presets": config.SUB_PRESETS,
         "sub_preset_default": config.SUB_PRESET,
+        "default_cover_available": config.DEFAULT_COVER_IMAGE.exists(),
         "has_deepseek": bool(config.DEEPSEEK_API_KEY),
         "bilibili_logged_in": Path(config.BILIBILI_COOKIE_FILE).exists(),
     }
+
+
+def _num_or_none(value: str) -> float | None:
+    value = (value or "").strip()
+    if not value or value.upper() in {"N/A", "[NOT SUPPORTED]"}:
+        return None
+    try:
+        return float(value)
+    except ValueError:
+        return None
+
+
+@app.get("/api/gpu-status")
+def gpu_status():
+    smi = shutil.which("nvidia-smi")
+    if not smi:
+        return {"available": False, "error": "nvidia-smi not found", "gpus": []}
+
+    query = (
+        "index,name,utilization.gpu,memory.used,memory.total,"
+        "temperature.gpu,power.draw,power.limit"
+    )
+    try:
+        proc = subprocess.run(
+            [smi, f"--query-gpu={query}", "--format=csv,noheader,nounits"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=3,
+            check=True,
+        )
+    except Exception as e:  # noqa: BLE001
+        return {"available": False, "error": str(e), "gpus": []}
+
+    gpus = []
+    for line in proc.stdout.splitlines():
+        parts = [p.strip() for p in line.split(",")]
+        if len(parts) < 8:
+            continue
+        used = _num_or_none(parts[3])
+        total = _num_or_none(parts[4])
+        gpus.append({
+            "index": int(_num_or_none(parts[0]) or 0),
+            "name": parts[1],
+            "util": _num_or_none(parts[2]),
+            "memory_used": used,
+            "memory_total": total,
+            "memory_pct": round(used / total * 100, 1) if used is not None and total else None,
+            "temperature": _num_or_none(parts[5]),
+            "power_draw": _num_or_none(parts[6]),
+            "power_limit": _num_or_none(parts[7]),
+        })
+    return {"available": bool(gpus), "gpus": gpus, "ts": time.time()}
 
 
 def _bili_login_worker(sid: str, value: dict):
@@ -1129,6 +1411,11 @@ def get_queue():
     return _queue_snapshot()
 
 
+@app.get("/api/archives")
+def get_archives():
+    return {"items": _archive_list()}
+
+
 @app.post("/api/queue/items")
 def add_queue_items(payload: dict = Body(...)):
     links = _parse_links(str(payload.get("links") or payload.get("url") or ""))
@@ -1200,13 +1487,44 @@ def reorder_queue(payload: dict = Body(...)):
 
 @app.post("/api/queue/run")
 def run_queue(payload: dict = Body(default={})):
-    global _QUEUE_RUNNING
+    global _QUEUE_RUNNING, _QUEUE_PAUSED, _QUEUE_STOP
     with _LOCK:
         if _QUEUE_RUNNING:
             raise HTTPException(409, "队列正在执行")
         if not any(x.get("status") in {"pending", "error"} for x in _QUEUE):
             raise HTTPException(400, "没有待执行任务")
         _QUEUE_RUNNING = True
+        _QUEUE_PAUSED = False
+        _QUEUE_STOP = False
+    configs = payload.get("configs") or {}
+    threading.Thread(target=_run_queue_thread, args=(configs,), daemon=True).start()
+    return {"ok": True}
+
+
+@app.post("/api/queue/pause")
+def pause_queue():
+    global _QUEUE_PAUSED
+    with _LOCK:
+        has_proc = _CURRENT_PROC is not None and _CURRENT_PROC.poll() is None
+    with _LOCK:
+        if not _QUEUE_RUNNING and not has_proc:
+            raise HTTPException(409, "当前没有正在执行的任务")
+        _QUEUE_PAUSED = True
+    _terminate_current_process("已暂停当前步骤")
+    return {"ok": True}
+
+
+@app.post("/api/queue/resume")
+def resume_queue(payload: dict = Body(default={})):
+    global _QUEUE_RUNNING, _QUEUE_PAUSED, _QUEUE_STOP
+    with _LOCK:
+        if _QUEUE_RUNNING:
+            raise HTTPException(409, "队列正在执行")
+        if not any(x.get("status") in {"pending", "error"} for x in _QUEUE):
+            raise HTTPException(400, "没有可继续的任务")
+        _QUEUE_RUNNING = True
+        _QUEUE_PAUSED = False
+        _QUEUE_STOP = False
     configs = payload.get("configs") or {}
     threading.Thread(target=_run_queue_thread, args=(configs,), daemon=True).start()
     return {"ok": True}
@@ -1214,9 +1532,11 @@ def run_queue(payload: dict = Body(default={})):
 
 @app.post("/api/queue/stop")
 def stop_queue():
-    global _QUEUE_STOP
+    global _QUEUE_STOP, _QUEUE_PAUSED
     with _LOCK:
         _QUEUE_STOP = True
+        _QUEUE_PAUSED = False
+    _terminate_current_process("已停止当前步骤")
     return {"ok": True}
 
 
@@ -1246,6 +1566,74 @@ def open_queue_output(item_id: str):
         out_dir = _work_path(item["job_id"])
     _open_path(out_dir)
     return {"ok": True, "path": str(out_dir)}
+
+
+@app.post("/api/queue/items/{item_id}/mark-uploaded")
+def mark_queue_uploaded(item_id: str):
+    with _LOCK:
+        item = next((dict(x) for x in _QUEUE if x["id"] == item_id), None)
+    if not item:
+        raise HTTPException(404, "队列项不存在")
+    result = _mark_archive_uploaded(item["job_id"], True)
+    with _LOCK:
+        _QUEUE[:] = [x for x in _QUEUE if x.get("id") != item_id]
+        for i, x in enumerate(_QUEUE):
+            x["order"] = i
+        _save_queue_state_unlocked()
+    return result
+
+
+@app.post("/api/archives/mark-uploaded")
+def mark_archive_uploaded(payload: dict = Body(...)):
+    archive_value = str(payload.get("archive_dir") or "").strip()
+    if not archive_value:
+        raise HTTPException(400, "缺少 archive_dir")
+    archive_dir = Path(archive_value).resolve()
+    output_root = config.OUTPUT_DIR.resolve()
+    if archive_dir == output_root or not _is_inside(archive_dir, output_root):
+        raise HTTPException(400, "归档目录不在输出目录内")
+    meta = load_json(archive_dir / "metadata.json") or {}
+    if not meta:
+        raise HTTPException(404, "归档 metadata 不存在")
+    job_id = ""
+    with _LOCK:
+        item = next((x for x in _QUEUE if Path(str(x.get("project_dir") or x.get("output_dir") or "")).resolve() == archive_dir), None)
+        if item:
+            job_id = item.get("job_id", "")
+    if job_id:
+        return _mark_archive_uploaded(job_id, True)
+
+    meta["archive_dir"] = str(archive_dir)
+    if (archive_dir / "video.mp4").exists():
+        meta["video"] = str(archive_dir / "video.mp4")
+    if (archive_dir / "cover.png").exists():
+        meta["cover"] = str(archive_dir / "cover.png")
+    meta["uploaded"] = True
+    meta["uploaded_at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
+    _write_archive_meta_files(meta)
+    removed_files, freed_bytes = _clear_archive_cache(archive_dir)
+    return {
+        "ok": True,
+        "uploaded": True,
+        "archive_dir": str(archive_dir),
+        "removed_files": removed_files,
+        "freed_bytes": freed_bytes,
+    }
+
+
+@app.post("/api/archives/open")
+def open_archive(payload: dict = Body(...)):
+    archive_value = str(payload.get("archive_dir") or "").strip()
+    if not archive_value:
+        raise HTTPException(400, "缺少 archive_dir")
+    archive_dir = Path(archive_value).resolve()
+    output_root = config.OUTPUT_DIR.resolve()
+    if archive_dir == output_root or not _is_inside(archive_dir, output_root):
+        raise HTTPException(400, "归档目录不在输出目录内")
+    if not archive_dir.exists():
+        raise HTTPException(404, "归档目录不存在")
+    _open_path(archive_dir)
+    return {"ok": True, "path": str(archive_dir)}
 
 
 @app.post("/api/jobs/{job_id}/open-output")
@@ -1392,6 +1780,11 @@ def cover(job_id: str):
     meta = _remember_archive_meta(job_id)
     archived = _archive_file(meta, "cover", "cover.png")
     return _serve(archived or (_work_path(job_id) / "cover.png"), "image/png")
+
+
+@app.get("/api/default-cover.png")
+def default_cover():
+    return _serve(config.DEFAULT_COVER_IMAGE, "image/png")
 
 
 @app.get("/api/jobs/{job_id}/source.mp4")

@@ -88,7 +88,7 @@ def run_download(job_id: str, cfg: dict) -> dict:
         m4a = wd / "source.m4a"
         if not m4a.exists():
             log("download", f"下载音频：{url}")
-            download._ytdlp_stream([config.YT_DLP, "--newline", "-f", "ba/b",
+            download._ytdlp_stream([*config.YT_DLP, "--newline", "-f", "ba/b",
                  "-x", "--audio-format", "m4a",
                  "--ffmpeg-location", str(Path(config.FFMPEG).parent),
                  "-o", str(wd / "source.%(ext)s"), url])
@@ -121,7 +121,9 @@ def run_translate(job_id: str, cfg: dict) -> dict:
     before = load_json(wd / "translated.json")
     out = translate_mod.translate(segs, wd, engine=engine)
     if before is not None and before != out:
-        for name in ("dub.wav", "dub_segments.json", "subs.srt", "subs.vtt",
+        for name in ("dub.wav", "dub_segments.json", "dub_speed.json",
+                     "compose_audio_speed.json",
+                     "subs.srt", "subs.vtt",
                      "subs.ass", "cover_title.txt"):
             (wd / name).unlink(missing_ok=True)
         final_path(job_id).unlink(missing_ok=True)
@@ -141,23 +143,94 @@ def run_tts(job_id: str, cfg: dict) -> dict:
             config.TTS_SPEED = max(0.5, min(1.6, float(cfg["speed"])))
         except (TypeError, ValueError):
             pass
+    if cfg.get("f5_parallel") is not None:
+        try:
+            config.F5_TTS_PARALLEL = max(1, min(4, int(cfg["f5_parallel"])))
+        except (TypeError, ValueError):
+            pass
     segs = load_json(wd / "translated.json")
-    # 改了配音参数需要重算：删除旧产物
+    # 改了配音参数需要重算：删除旧产物；F5 原速中间音频只临时生成，不再落盘保留。
     if cfg.get("force"):
-        for f in ("dub.wav", "dub_segments.json"):
+        for f in ("dub.wav", "dub_segments.json", "dub_speed.json",
+                  "compose_audio_speed.json"):
             (wd / f).unlink(missing_ok=True)
     _, retimed = tts.synthesize(segs, wd)
+    (wd / "compose_audio_speed.json").unlink(missing_ok=True)
+    for name in ("subs.srt", "subs.vtt", "subs.ass", "final.mp4",
+                 "compose.result.json", "cover_title.txt"):
+        (wd / name).unlink(missing_ok=True)
     result = {"count": len(retimed), "duration": retimed[-1]["end"] if retimed else 0}
-    gemini_cost = load_json(wd / "gemini_tts_usage.json")
-    if gemini_cost:
-        result["gemini_cost"] = gemini_cost
     return result
+
+
+def _atempo_filter(speed: float) -> str:
+    speed = float(speed or 1.0)
+    if speed <= 0:
+        speed = 1.0
+    parts: list[float] = []
+    while speed > 2.0:
+        parts.append(2.0)
+        speed /= 2.0
+    while speed < 0.5:
+        parts.append(0.5)
+        speed /= 0.5
+    parts.append(speed)
+    return ",".join(f"atempo={x:.6g}" for x in parts)
+
+
+def _apply_compose_audio_speed(wd: Path, target_speed) -> list[dict]:
+    """Apply step-5-only speed to dub.wav in place and keep subtitles aligned."""
+    try:
+        target = max(0.5, min(1.6, float(target_speed or 1.0)))
+    except (TypeError, ValueError):
+        target = 1.0
+
+    meta_path = wd / "compose_audio_speed.json"
+    meta = load_json(meta_path) or {}
+    try:
+        previous = max(0.5, min(1.6, float(meta.get("speed", 1.0))))
+    except (TypeError, ValueError):
+        previous = 1.0
+
+    wav = wd / "dub.wav"
+    seg_path = wd / "dub_segments.json"
+    segs = load_json(seg_path) or []
+    ratio = target / previous if previous else target
+
+    if abs(ratio - 1.0) < 1e-3:
+        save_json(meta_path, {"speed": target})
+        if abs(target - 1.0) >= 1e-3:
+            log("compose", f"沿用第 5 步配音变速 {target:.2f}x")
+        return segs
+
+    tmp = wav.with_name(f"{wav.stem}.compose_speedtmp{wav.suffix}")
+    run([
+        config.FFMPEG, "-y", "-hide_banner", "-loglevel", "error",
+        "-i", str(wav),
+        "-filter:a", _atempo_filter(ratio),
+        str(tmp),
+    ], desc=f"第 5 步配音二次变速 {target:.2f}x")
+    os.replace(tmp, wav)
+
+    adjusted = []
+    for seg in segs:
+        adjusted.append({
+            **seg,
+            "start": round(float(seg.get("start", 0)) / ratio, 3),
+            "end": round(float(seg.get("end", 0)) / ratio, 3),
+        })
+    save_json(seg_path, adjusted)
+    save_json(meta_path, {"speed": target})
+    log("compose", f"配音已二次变速到 {target:.2f}x，字幕时间已同步")
+    return adjusted
 
 
 # ----------------------------------------------------------------- 5) 合成
 def run_compose(job_id: str, cfg: dict) -> dict:
     wd = work_dir_of(job_id)
-    segs = load_json(wd / "dub_segments.json") or load_json(wd / "translated.json")
+    segs = _apply_compose_audio_speed(wd, cfg.get("audio_speed", 1.0))
+    if not segs:
+        segs = load_json(wd / "dub_segments.json") or load_json(wd / "translated.json")
     bilingual = bool(cfg.get("bilingual", False))
     presets = {p["key"]: p for p in config.SUB_PRESETS}
     style = dict(presets.get(cfg.get("preset", config.SUB_PRESET), presets["classic"]))
@@ -199,10 +272,10 @@ def run_publish(job_id: str, cfg: dict) -> dict:
         archive_dir=cfg.get("archive_dir"),
         cover_image=cfg.get("file") or cfg.get("cover_image"),
         cover_title=cfg.get("cover_title", ""),
-        cover_x=cfg.get("cover_x", 0.07),
-        cover_y=cfg.get("cover_y", 0.10),
-        cover_font_size=cfg.get("cover_font_size", 132),
-        cover_width=cfg.get("cover_width", 0.62),
+        cover_x=cfg.get("cover_x", config.DEFAULT_COVER_TITLE_X),
+        cover_y=cfg.get("cover_y", config.DEFAULT_COVER_TITLE_Y),
+        cover_font_size=cfg.get("cover_font_size", config.DEFAULT_COVER_TITLE_FONT_SIZE),
+        cover_width=cfg.get("cover_width", config.DEFAULT_COVER_TITLE_WIDTH),
     )
     if meta.get("archive_dir"):
         _register_output_project(job_id, meta["archive_dir"])

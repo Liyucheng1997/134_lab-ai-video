@@ -1,9 +1,9 @@
 """一次性子进程：合成音色试听音频（单个或批量）。
 
-单个：python voice_sample.py --engine gemini --voice X --speed 1.0 --out path.wav
-批量：python voice_sample.py --engine gemini --speed 1.0 --spec spec.json
+单个：python voice_sample.py --voice 人工老龙凤 --speed 1.0 --out path.wav
+批量：python voice_sample.py --speed 1.0 --spec spec.json
       spec.json = [{"voice": "...", "out": "..."}, ...]，进度通过 stdout 上浮。
-单独进程跑（加载 torch/F5/Qwen 等），避免污染主服务进程；同一进程内复用已加载模型。
+单独进程跑（加载 torch/F5），避免污染主服务进程；同一进程内复用已加载模型。
 """
 from __future__ import annotations
 

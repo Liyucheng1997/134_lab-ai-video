@@ -1,10 +1,6 @@
 """第 4 步：中文配音引擎调度器。
 
-按 config.TTS_ENGINE 选择具体引擎实现：
-- qwen3     Qwen3-TTS（本地·稳定）
-- f5        F5-TTS（本地·音色克隆）
-- azure     Azure 神经网络语音（云端·最自然，需 KEY）
-- cosyvoice CosyVoice2（阿里·开源本地，情感指令）
+当前项目只保留 F5-TTS。
 
 每个引擎模块都暴露相同接口：synthesize(segments, work_dir) / sample(text, out) / VOICES。
 """
@@ -17,13 +13,9 @@ from . import config
 
 # 引擎 key -> (模块名, 显示名)
 _ENGINES = {
-    "qwen3": ("tts_qwen", "Qwen3-TTS（本地·稳定）"),
     "f5": ("tts_f5", "F5-TTS（本地·音色克隆）"),
-    "azure": ("tts_azure", "Azure TTS（云端·最自然）"),
-    "gemini": ("tts_gemini", "Gemini TTS（云端·可控情感）"),
-    "cosyvoice": ("tts_cosyvoice", "CosyVoice2（本地·情感指令）"),
 }
-DEFAULT_ENGINE = "gemini"
+DEFAULT_ENGINE = "f5"
 
 
 def _engine_key(engine: str | None = None) -> str:
@@ -54,29 +46,10 @@ def sample(text: str, out_path: Path, voice: str | None = None,
 def _availability(key: str) -> tuple[bool, str]:
     """返回 (是否可用, 不可用时的提示)。只做轻量检查，不加载模型。"""
     import importlib.util as iu
-    from pathlib import Path
 
-    if key == "azure":
-        if not config.AZURE_SPEECH_KEY:
-            return False, "需在 .env 填 AZURE_SPEECH_KEY 与 AZURE_SPEECH_REGION"
-        return True, ""
-    if key == "gemini":
-        if not config.GEMINI_API_KEY:
-            return False, "需在 .env 填 GEMINI_API_KEY（或 GOOGLE_API_KEY）"
-        return True, ""
-    if key == "qwen3":
-        if iu.find_spec("qwen_tts") is None:
-            return False, "未安装 qwen_tts"
-        return True, ""
     if key == "f5":
         if iu.find_spec("f5_tts") is None:
             return False, "未安装 f5-tts，请 pip install f5-tts"
-        return True, ""
-    if key == "cosyvoice":
-        if not Path(config.COSYVOICE_REPO_DIR).exists():
-            return False, "未找到 CosyVoice 仓库，请 clone 并设置 COSYVOICE_REPO_DIR"
-        if not Path(config.COSYVOICE_MODEL_DIR).exists():
-            return False, "未下载 CosyVoice2-0.5B，请设置 COSYVOICE_MODEL_DIR"
         return True, ""
     return True, ""
 

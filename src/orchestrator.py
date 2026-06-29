@@ -26,7 +26,7 @@ def make_job_id(url: str | None, file_name: str | None) -> str:
     return "up_" + hashlib.sha1(seed.encode("utf-8")).hexdigest()[:9]
 
 
-# 重要：faster-whisper(ctranslate2) 与 Qwen3-TTS(torch) 同进程加载 CUDA 可能互相影响或崩溃。
+# 重要：faster-whisper(ctranslate2) 与 F5-TTS(torch) 同进程加载 CUDA 可能互相影响或崩溃。
 # 访问冲突崩溃。因此把流程拆成两个阶段，由 pipeline.py 放到各自独立的子进程里跑：
 #   prep   = 下载/导入 + 识别 + 翻译   （只用 ctranslate2）
 #   render = 配音 + 字幕 + 合成        （只用 torch）
