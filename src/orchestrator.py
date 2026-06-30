@@ -10,9 +10,9 @@ from .utils import log, media_duration
 
 # UI 展示用的步骤定义（顺序即流程顺序）
 STEPS = [
-    ("download", "下载 / 导入"),
+    ("download", "视频下载"),
     ("asr", "语音识别"),
-    ("translate", "翻译"),
+    ("translate", "中文翻译"),
     ("tts", "中文配音"),
     ("subs", "生成字幕"),
     ("mux", "合成输出"),

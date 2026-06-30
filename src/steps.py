@@ -16,12 +16,12 @@ from .utils import load_json, log, run, save_json
 
 # UI 用的步骤定义：key / 名称 / 依赖的上一步 / 完成标志文件
 STEP_DEFS = [
-    {"key": "download",  "name": "下载视频/音频", "needs": None,        "artifact": "source.wav"},
-    {"key": "asr",       "name": "语音转文字",     "needs": "download",  "artifact": "segments.json"},
-    {"key": "translate", "name": "翻译为中文",     "needs": "asr",       "artifact": "translated.json"},
+    {"key": "download",  "name": "视频下载",       "needs": None,        "artifact": "source.wav"},
+    {"key": "asr",       "name": "语音识别",       "needs": "download",  "artifact": "segments.json"},
+    {"key": "translate", "name": "中文翻译",       "needs": "asr",       "artifact": "translated.json"},
     {"key": "tts",       "name": "中文配音",       "needs": "translate", "artifact": "dub.wav"},
-    {"key": "compose",   "name": "合成视频",       "needs": "tts",       "artifact": "final.mp4"},
-    {"key": "publish",   "name": "保存信息归档",   "needs": "compose",   "artifact": "publish/metadata.json"},
+    {"key": "compose",   "name": "视频合成",       "needs": "tts",       "artifact": "final.mp4"},
+    {"key": "publish",   "name": "灯火归档",       "needs": "compose",   "artifact": "publish/metadata.json"},
 ]
 
 

@@ -1,4 +1,4 @@
-"""Web 服务：6 步流水线，每步可单独配置/运行/预览，也可一键全跑。
+"""星星点灯 Web 服务：6 步点灯线，每步可单独配置/点灯/预览，也可一键全跑。
 
 - 每步以独立子进程（step.py）执行：崩溃隔离 + CUDA 安全（ASR/TTS 天然分进程）。
 - 每步的日志/进度单独记录，前端显示在各自卡片上。
@@ -26,7 +26,7 @@ from src import config
 from src.steps import STEP_DEFS, final_path, work_dir_of
 from src.utils import load_json, media_duration
 
-app = FastAPI(title="AI 视频自动化 · 流水线")
+app = FastAPI(title="星星点灯")
 
 WEB_DIR = config.BASE_DIR / "web"
 UPLOAD_DIR = config.WORK_DIR / "_uploads"
@@ -514,7 +514,7 @@ def _normalize_queue_item(item: dict, order: int) -> dict:
     out["ended_at"] = out.get("ended_at")
     if out["status"] == "running":
         out["status"] = "pending"
-        out["error"] = "服务重启中断，已恢复为待执行"
+        out["error"] = "服务重启中断，已恢复为待点灯"
         out["started_at"] = None
         out["ended_at"] = None
     if out["title"] and out["status"] == "pending":
@@ -654,7 +654,7 @@ def _state(job_id: str) -> dict:
         result = load_json(wd / f"{k}.result.json") or {}
         progress = 100 if st == "done" else r["progress"]
         if not logs and st == "done":
-            logs = [{"t": "--:--:--", "stage": "state", "msg": "步骤已完成（从产物文件恢复状态）"}]
+            logs = [{"t": "--:--:--", "stage": "state", "msg": "步骤已点亮（从产物文件恢复状态）"}]
         started = r.get("started_at")
         ended = r.get("ended_at")
         elapsed = (ended or time.time()) - started if started else 0
@@ -1431,6 +1431,18 @@ def get_archives():
     return {"items": _archive_list()}
 
 
+@app.get("/api/archives/cover.png")
+def get_archive_cover(archive_dir: str):
+    archive_path = Path(str(archive_dir or "")).resolve()
+    output_root = config.OUTPUT_DIR.resolve()
+    if archive_path == output_root or not _is_inside(archive_path, output_root):
+        raise HTTPException(400, "归档目录不在输出目录内")
+    cover = archive_path / "cover.png"
+    if not cover.exists():
+        raise HTTPException(404, "归档封面不存在")
+    return _serve(cover, "image/png")
+
+
 @app.post("/api/queue/items")
 def add_queue_items(payload: dict = Body(...)):
     links = _parse_links(str(payload.get("links") or payload.get("url") or ""))
@@ -1474,7 +1486,7 @@ def delete_queue_item(item_id: str):
     with _LOCK:
         item = next((dict(x) for x in _QUEUE if x["id"] == item_id), None)
         if not item:
-            raise HTTPException(404, "队列项不存在")
+            raise HTTPException(404, "星星队列项不存在")
         if item.get("status") == "running":
             raise HTTPException(409, "正在执行的任务不能删除")
     _delete_job_files(item)
@@ -1492,7 +1504,7 @@ def reorder_queue(payload: dict = Body(...)):
     with _LOCK:
         by_id = {x["id"]: x for x in _QUEUE}
         if set(ids) != set(by_id):
-            raise HTTPException(400, "排序列表与当前队列不匹配")
+            raise HTTPException(400, "排序列表与当前星星队列不匹配")
         _QUEUE[:] = [by_id[item_id] for item_id in ids]
         for i, item in enumerate(_QUEUE):
             item["order"] = i
@@ -1505,9 +1517,9 @@ def run_queue(payload: dict = Body(default={})):
     global _QUEUE_RUNNING, _QUEUE_PAUSED, _QUEUE_STOP
     with _LOCK:
         if _QUEUE_RUNNING:
-            raise HTTPException(409, "队列正在执行")
+            raise HTTPException(409, "星星队列正在点灯")
         if not any(x.get("status") in {"pending", "error"} for x in _QUEUE):
-            raise HTTPException(400, "没有待执行任务")
+            raise HTTPException(400, "没有待点灯任务")
         _QUEUE_RUNNING = True
         _QUEUE_PAUSED = False
         _QUEUE_STOP = False
@@ -1534,7 +1546,7 @@ def resume_queue(payload: dict = Body(default={})):
     global _QUEUE_RUNNING, _QUEUE_PAUSED, _QUEUE_STOP
     with _LOCK:
         if _QUEUE_RUNNING:
-            raise HTTPException(409, "队列正在执行")
+            raise HTTPException(409, "星星队列正在点灯")
         if not any(x.get("status") in {"pending", "error"} for x in _QUEUE):
             raise HTTPException(400, "没有可继续的任务")
         _QUEUE_RUNNING = True
@@ -1574,7 +1586,7 @@ def open_queue_output(item_id: str):
     with _LOCK:
         item = next((dict(x) for x in _QUEUE if x["id"] == item_id), None)
     if not item:
-        raise HTTPException(404, "队列项不存在")
+        raise HTTPException(404, "星星队列项不存在")
     meta = _remember_archive_meta(item["job_id"])
     out_dir = Path(meta.get("archive_dir") or item.get("output_dir") or "")
     if not str(out_dir):
@@ -1588,7 +1600,7 @@ def mark_queue_uploaded(item_id: str):
     with _LOCK:
         item = next((dict(x) for x in _QUEUE if x["id"] == item_id), None)
     if not item:
-        raise HTTPException(404, "队列项不存在")
+        raise HTTPException(404, "星星队列项不存在")
     result = _mark_archive_uploaded(item["job_id"], True)
     with _LOCK:
         _QUEUE[:] = [x for x in _QUEUE if x.get("id") != item_id]
@@ -1678,7 +1690,7 @@ async def run_step(job_id: str, step: str = Form(...), config_json: str = Form("
     if step not in _STEP_KEYS:
         raise HTTPException(400, "未知步骤")
     if _job(job_id)["running"]:
-        raise HTTPException(409, "已有步骤在运行")
+        raise HTTPException(409, "已有步骤正在点灯")
     ok, reason = _dependency_ready(job_id, step)
     if not ok:
         raise HTTPException(409, reason)
@@ -1697,7 +1709,7 @@ async def run_all(job_id: str, configs_json: str = Form("{}"),
                   file: UploadFile | None = File(default=None),
                   cover_file: UploadFile | None = File(default=None)):
     if _job(job_id)["running"]:
-        raise HTTPException(409, "已有步骤在运行")
+        raise HTTPException(409, "已有步骤正在点灯")
     try:
         configs = json.loads(configs_json or "{}")
     except json.JSONDecodeError:
@@ -1713,7 +1725,7 @@ async def run_all(job_id: str, configs_json: str = Form("{}"),
 @app.post("/api/jobs/{job_id}/rerun_from")
 def rerun_from(job_id: str, payload: dict = Body(...)):
     if _job(job_id)["running"]:
-        raise HTTPException(409, "已有步骤在运行")
+        raise HTTPException(409, "已有步骤正在点灯")
     step = str(payload.get("step") or "")
     if step not in _STEP_KEYS:
         raise HTTPException(400, "未知步骤")

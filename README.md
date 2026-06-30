@@ -1,8 +1,8 @@
-# 123 · AI 视频自动化
+# 星星点灯
 
 把一个 YouTube 视频（任意语言）一键转成 **中文配音 + 中文硬字幕** 的 MP4。
 
-## 流水线
+## 点灯线
 
 ```
 YouTube URL
@@ -31,17 +31,17 @@ copy .env.example .env
 # 编辑 .env，填入 DEEPSEEK_API_KEY
 ```
 
-## 网页版（推荐）— 六步流水线
+## 网页版（推荐）— 六步点灯线
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\web.ps1
 ```
 
-浏览器打开 <http://127.0.0.1:8800>。界面是**分步流水线**，每一步可单独配置、运行、预览：
+浏览器打开 <http://127.0.0.1:8800>。界面是**分步点灯线**，每一步可单独配置、点灯、预览：
 
 | 步 | 配置项 | 预览 |
 |----|--------|------|
-| 1 下载/导入 | 链接或上传；视频 / 仅音频 | 原视频播放 |
+| 1 视频下载 | 链接或上传；下载视频并提取音频 | 原视频播放 |
 | 2 语音识别 | 模型(small/large-v3-turbo)、语言 | 逐句原文 |
 | 3 翻译 | **DeepSeek** / **Google 免费** | 中英对照 |
 | 4 中文配音 | **F5-TTS**，音色、语速、并发数，可**试听** | 配音音轨试听 |
@@ -60,7 +60,7 @@ output/01_心灵成长_20260629/
 
 归档文件夹内包含 `video.mp4`、`cover.png`、`title.txt`、`description.txt`、`tags.txt`、`publish_info.md` 和 `metadata.json`。
 
-## 命令行运行
+## 命令行点灯
 
 ```powershell
 # 默认 F5 音色、small 模型、自动检测语言
