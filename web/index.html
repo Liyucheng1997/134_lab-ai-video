@@ -53,12 +53,12 @@
   @media(max-width:980px){.app{grid-template-columns:1fr}
     .side{position:static!important;height:auto!important;max-height:none!important;overflow:visible!important}
     .queue-panel,.archive-launcher{flex:none!important}
-    .qlist{overflow:visible!important;max-height:none!important}}
+    .qlist{overflow-y:auto!important}}
   .side{position:sticky;top:22px;height:calc(100vh - 44px);overflow:hidden;display:flex;flex-direction:column;gap:16px}
   .queue-panel,.archive-launcher{background:var(--card);
     border:1px solid var(--glass);border-radius:18px;box-shadow:var(--sh-sm);padding:16px;backdrop-filter:var(--blur);
     -webkit-backdrop-filter:var(--blur);display:flex;flex-direction:column;min-height:0;overflow:hidden}
-  .queue-panel{flex:1 1 0}
+  .queue-panel{flex:1 1 0;display:flex;flex-direction:column;min-height:0}
   .archive-launcher{flex:0 0 auto;padding:12px}
   .qhead{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px}
   .qtitle{font-size:17px;font-weight:800}
@@ -67,8 +67,13 @@
   .qactions{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
   .qactions .btn{margin-top:0;padding:9px 12px;font-size:13px;border-radius:10px}
   .qactions .btn.ghost{padding:8px 11px}
-  .qlist{display:flex;flex-direction:column;gap:10px;margin-top:14px;flex:1 1 auto;min-height:0;overflow-y:auto;padding-right:4px}
-  .qitem{position:relative;border:1px solid var(--line);background:var(--soft);border-radius:12px;padding:10px;cursor:pointer;overflow:hidden}
+  .qlist{display:flex;flex-direction:column;gap:10px;margin-top:14px;flex:1 1 auto;height:auto;
+    min-height:260px;overflow-y:auto;overscroll-behavior:contain;padding-right:7px;scrollbar-width:thin;scrollbar-color:rgba(63,87,159,.45) rgba(225,229,241,.55)}
+  .qlist::-webkit-scrollbar{width:8px}
+  .qlist::-webkit-scrollbar-track{background:rgba(225,229,241,.55);border-radius:999px}
+  .qlist::-webkit-scrollbar-thumb{background:rgba(63,87,159,.45);border-radius:999px;border:2px solid rgba(248,250,255,.80)}
+  .qlist::-webkit-scrollbar-thumb:hover{background:rgba(63,87,159,.62)}
+  .qitem{position:relative;flex:0 0 auto;border:1px solid var(--line);background:var(--soft);border-radius:12px;padding:10px;cursor:pointer;overflow:hidden}
   .qitem.active{border-color:#3146b7;background:rgba(63,87,159,.10);
     box-shadow:0 10px 26px rgba(49,70,183,.20),inset 0 0 0 1px rgba(49,70,183,.18)}
   .qitem.active::before{content:"";position:absolute;left:0;top:0;bottom:0;width:4px;background:var(--brand)}
@@ -140,6 +145,19 @@
     border:1px dashed var(--line);border-radius:16px;background:rgba(255,255,255,.4)}
   @media(max-width:720px){.archive-library{inset:10px;border-radius:22px}.archive-library-head{padding:17px 16px 12px}
     .archive-library-title{font-size:21px}.archive-gallery{padding:16px;grid-template-columns:1fr}.archive-close{width:34px;height:34px}}
+  .confirm-overlay{position:fixed;inset:0;z-index:120;display:none;place-items:center;padding:22px;background:rgba(31,38,62,.30);
+    backdrop-filter:saturate(145%) blur(14px);-webkit-backdrop-filter:saturate(145%) blur(14px)}
+  .confirm-overlay.open{display:grid}
+  .confirm-card{width:min(480px,100%);border-radius:22px;background:rgba(248,250,255,.88);border:1px solid rgba(255,255,255,.76);
+    box-shadow:0 26px 74px rgba(37,48,93,.32);padding:22px;transform:translateY(6px);animation:popin .18s ease-out forwards}
+  @keyframes popin{to{transform:translateY(0)}}
+  .confirm-head{display:flex;gap:13px;align-items:center}
+  .confirm-icon{width:38px;height:38px;border-radius:13px;display:grid;place-items:center;background:#263b86;color:#fff5c8;
+    box-shadow:0 9px 22px rgba(38,61,140,.20);font-size:18px;flex:none}
+  .confirm-title{font-size:18px;font-weight:900;color:var(--ink);line-height:1.2}
+  .confirm-body{margin:14px 0 0;color:#58627d;font-size:14px;line-height:1.75}
+  .confirm-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:20px}
+  .confirm-actions .btn{margin-top:0;min-width:92px}
   .main{min-width:0}
 
   /* 顶部控制条 + 产线状态 */
@@ -380,6 +398,21 @@
 <div id="sample-warmup" class="sample-warmup hide">
   <div id="sample-warmup-text">正在准备试听音色</div>
   <div class="mini"><i id="sample-warmup-bar"></i></div>
+</div>
+<div class="confirm-overlay" id="confirm-overlay" aria-hidden="true">
+  <section class="confirm-card" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
+    <div class="confirm-head">
+      <div class="confirm-icon">✦</div>
+      <div>
+        <div class="confirm-title" id="confirm-title">确认操作</div>
+      </div>
+    </div>
+    <div class="confirm-body" id="confirm-body"></div>
+    <div class="confirm-actions">
+      <button class="btn ghost" id="confirm-cancel">取消</button>
+      <button class="btn" id="confirm-ok">确认</button>
+    </div>
+  </section>
 </div>
 
 <script>
@@ -914,9 +947,43 @@ async function openOutput(id,ev){
   if(!r.ok)alert((await r.json().catch(()=>({}))).detail||"打开失败");
 }
 
+function confirmCard({title="确认操作",body="",okText="确认",cancelText="取消"}={}){
+  const overlay=document.getElementById("confirm-overlay");
+  const titleEl=document.getElementById("confirm-title"),bodyEl=document.getElementById("confirm-body");
+  const ok=document.getElementById("confirm-ok"),cancel=document.getElementById("confirm-cancel");
+  if(!overlay||!ok||!cancel)return Promise.resolve(window.confirm(body||title));
+  titleEl.textContent=title;
+  bodyEl.textContent=body;
+  ok.textContent=okText;
+  cancel.textContent=cancelText;
+  overlay.classList.add("open");
+  overlay.setAttribute("aria-hidden","false");
+  document.body.classList.add("modal-open");
+  return new Promise(resolve=>{
+    const done=value=>{
+      overlay.classList.remove("open");
+      overlay.setAttribute("aria-hidden","true");
+      document.body.classList.remove("modal-open");
+      ok.onclick=cancel.onclick=overlay.onclick=null;
+      document.removeEventListener("keydown",onKey);
+      resolve(value);
+    };
+    const onKey=ev=>{if(ev.key==="Escape")done(false);};
+    ok.onclick=()=>done(true);
+    cancel.onclick=()=>done(false);
+    overlay.onclick=ev=>{if(ev.target===overlay)done(false);};
+    document.addEventListener("keydown",onKey);
+  });
+}
+
 async function markUploaded(id,ev){
   ev.stopPropagation();
-  if(!confirm("确认这个视频已经上传？确认后会清空该项目 cache 中的中间文件，只保留发布所需文件。"))return;
+  const ok=await confirmCard({
+    title:"归档这盏灯？",
+    body:"确认已经上传后，会清空该项目 cache 中的中间文件，只保留发布所需文件。",
+    okText:"归档灯火",
+  });
+  if(!ok)return;
   const r=await fetch(`${API}/api/queue/items/${id}/mark-uploaded`,{method:"POST"});
   if(!r.ok){alert((await r.json().catch(()=>({}))).detail||"标记失败");return;}
   await refreshQueue();
@@ -935,7 +1002,12 @@ async function openArchive(encoded,ev){
 async function markArchiveUploaded(encoded,ev){
   ev.stopPropagation();
   const archive_dir=decodeURIComponent(encoded);
-  if(!confirm("确认这个归档已经上传？确认后会清空该项目 cache 中的中间文件。"))return;
+  const ok=await confirmCard({
+    title:"确认灯火已上传？",
+    body:"确认后会清空该项目 cache 中的中间文件，保留归档中的成片、封面和发布信息。",
+    okText:"确认上传",
+  });
+  if(!ok)return;
   const r=await fetch(`${API}/api/archives/mark-uploaded`,{
     method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({archive_dir})
   });
