@@ -122,6 +122,12 @@
   .archive-library-kicker{font-size:12px;color:var(--mut);font-weight:700;text-transform:uppercase;letter-spacing:.08em}
   .archive-library-title{font-size:26px;font-weight:900;line-height:1.15;margin-top:2px}
   .archive-library-count{font-size:13px;color:var(--mut);margin-top:3px}
+  .archive-library-tools{display:flex;align-items:center;gap:12px;flex:none}
+  .archive-sort{display:flex;align-items:center;gap:4px;border:1px solid var(--line);background:rgba(255,255,255,.54);
+    border-radius:12px;padding:4px;box-shadow:0 8px 22px rgba(60,72,140,.08)}
+  .archive-sort-btn{border:0;background:transparent;border-radius:8px;padding:6px 10px;color:var(--mut);font:inherit;
+    font-size:12px;font-weight:800;line-height:1.2;cursor:pointer;white-space:nowrap}
+  .archive-sort-btn.active{background:#fff;color:var(--brand);box-shadow:0 5px 13px rgba(60,72,140,.12)}
   .archive-close{width:38px;height:38px;border-radius:50%;border:1px solid var(--line);background:rgba(255,255,255,.72);
     display:grid;place-items:center;cursor:pointer;color:var(--ink);font-size:25px;line-height:1}
   .archive-gallery{padding:22px 24px 28px;overflow:auto;display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));
@@ -144,7 +150,8 @@
   .archive-empty{grid-column:1/-1;min-height:220px;display:grid;place-items:center;text-align:center;color:var(--mut);
     border:1px dashed var(--line);border-radius:16px;background:rgba(255,255,255,.4)}
   @media(max-width:720px){.archive-library{inset:10px;border-radius:22px}.archive-library-head{padding:17px 16px 12px}
-    .archive-library-title{font-size:21px}.archive-gallery{padding:16px;grid-template-columns:1fr}.archive-close{width:34px;height:34px}}
+    .archive-library-title{font-size:21px}.archive-library-tools{gap:8px}.archive-sort-btn{padding:6px 8px}
+    .archive-gallery{padding:16px;grid-template-columns:1fr}.archive-close{width:34px;height:34px}}
   .confirm-overlay{position:fixed;inset:0;z-index:120;display:none;place-items:center;padding:22px;background:rgba(31,38,62,.30);
     backdrop-filter:saturate(145%) blur(14px);-webkit-backdrop-filter:saturate(145%) blur(14px)}
   .confirm-overlay.open{display:grid}
@@ -390,7 +397,13 @@
         <div class="archive-library-title" id="archive-library-title">灯火档案</div>
         <div class="archive-library-count" id="archive-library-count">0 个已上传</div>
       </div>
-      <button class="archive-close" onclick="closeArchiveLibrary()" aria-label="关闭">×</button>
+      <div class="archive-library-tools">
+        <div class="archive-sort" aria-label="档案排序方式">
+          <button class="archive-sort-btn active" id="archive-sort-desc" onclick="setArchiveSort('desc')" aria-pressed="true">新→旧</button>
+          <button class="archive-sort-btn" id="archive-sort-asc" onclick="setArchiveSort('asc')" aria-pressed="false">旧→新</button>
+        </div>
+        <button class="archive-close" onclick="closeArchiveLibrary()" aria-label="关闭">×</button>
+      </div>
     </div>
     <div class="archive-gallery" id="archive-gallery"></div>
   </section>
@@ -418,6 +431,7 @@
 <script>
 const API="";
 let JOB=null,CFG=null,ST=null,QST=null,ARCHIVES=[],prev={},dlFile=null,coverFile=null,coverImgUrl="",srcMode="link",jobES=null,queueES=null;
+let ARCHIVE_SORT=localStorage.getItem("archiveSort")||"desc";
 const logOpen=new Set(), pvOpen=new Set();
 
 const STEPS=[
@@ -1203,16 +1217,43 @@ document.addEventListener("keydown",ev=>{
   if(ev.key==="Escape")closeArchiveLibrary();
 });
 
+function archiveTime(ar){
+  const raw=ar&&ar.created_at;
+  if(typeof raw==="number")return raw;
+  const parsed=Date.parse(raw||"");
+  return Number.isFinite(parsed)?parsed/1000:0;
+}
+
+function sortedArchives(){
+  const dir=ARCHIVE_SORT==="asc"?"asc":"desc";
+  const sign=dir==="asc"?1:-1;
+  return [...(ARCHIVES||[])].sort((a,b)=>sign*(archiveTime(a)-archiveTime(b)));
+}
+
+function setArchiveSort(dir){
+  ARCHIVE_SORT=dir==="asc"?"asc":"desc";
+  localStorage.setItem("archiveSort",ARCHIVE_SORT);
+  renderArchives();
+}
+
 function renderArchives(){
   const gallery=document.getElementById("archive-gallery");
   const count=document.getElementById("archive-count"),libraryCount=document.getElementById("archive-library-count");
   const overlay=document.getElementById("archive-overlay");
-  const items=ARCHIVES||[];
+  const items=sortedArchives();
+  const sortText=ARCHIVE_SORT==="asc"?"按生成时间正序":"按生成时间倒序";
+  const descBtn=document.getElementById("archive-sort-desc"),ascBtn=document.getElementById("archive-sort-asc");
+  if(descBtn&&ascBtn){
+    descBtn.classList.toggle("active",ARCHIVE_SORT!=="asc");
+    ascBtn.classList.toggle("active",ARCHIVE_SORT==="asc");
+    descBtn.setAttribute("aria-pressed",ARCHIVE_SORT!=="asc"?"true":"false");
+    ascBtn.setAttribute("aria-pressed",ARCHIVE_SORT==="asc"?"true":"false");
+  }
   if(count){
     count.textContent=`${items.length} 个已上传`;
   }
   if(libraryCount){
-    libraryCount.textContent=`${items.length} 个已上传 · 按生成时间排列`;
+    libraryCount.textContent=`${items.length} 个已上传 · ${sortText}`;
   }
   if(!gallery||!overlay||!overlay.classList.contains("open"))return;
   if(!items.length){
