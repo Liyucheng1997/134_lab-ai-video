@@ -9,7 +9,7 @@ YouTube URL
   │
   ├─1. 下载         yt-dlp              → source.mp4 + source.wav(16k)
   ├─2. 转写         faster-whisper(GPU) → segments.json（带时间戳）
-  ├─3. 翻译         DeepSeek API        → translated.json（整段上下文翻译，按段回写）
+  ├─3. 翻译         DeepSeek API        → translated.json（整段上下文翻译，自动裁掉片尾广告）
   ├─4. 配音         F5-TTS(本地音色克隆) → dub.wav + dub_segments.json（连续分段配音并重新计时）
   ├─5. 字幕         自建 ASS/SRT        → subs.ass / subs.srt
   └─6. 归档         ffmpeg              → output/<编号>_<主题>_<日期>/（成片、封面、标题、简介）
@@ -43,7 +43,7 @@ powershell -ExecutionPolicy Bypass -File .\web.ps1
 |----|--------|------|
 | 1 视频下载 | 链接或上传；下载视频并提取音频 | 原视频播放 |
 | 2 语音识别 | 模型(small/large-v3-turbo)、语言 | 逐句原文 |
-| 3 翻译 | **DeepSeek** / **Google 免费** | 中英对照 |
+| 3 翻译 | **DeepSeek** / **Google 免费**；DeepSeek 会自动质检并裁掉片尾广告 | 中英对照 |
 | 4 中文配音 | **F5-TTS**，音色、语速、并发数，可**试听** | 配音音轨试听 |
 | 5 合成 | 原视频覆盖；字幕格式 ass/srt/vtt；中英双语；硬字幕；配音二次变速 | 字幕可视化 + 成片 + 下载 |
 | 6 生成信息归档 | 信息模板(B站)、分区、版权类型 | 自动生成标题/简介/标签/分区，并把成片、封面和数据保存到 `output` 子文件夹 |
@@ -58,7 +58,7 @@ powershell -ExecutionPolicy Bypass -File .\web.ps1
 output/01_心灵成长_20260629/
 ```
 
-归档文件夹内包含 `video.mp4`、`cover.png`、`title.txt`、`description.txt`、`tags.txt`、`publish_info.md` 和 `metadata.json`。
+归档文件夹内包含 `video.mp4`、`cover.png`、`douyin_cover.png`（抖音竖版封面）、`title.txt`、`description.txt`、`tags.txt`、`publish_info.md` 和 `metadata.json`。
 
 ## 命令行点灯
 

@@ -182,6 +182,31 @@ def _write_archive_files(archive_dir: Path, meta: dict) -> None:
     (archive_dir / "publish_info.md").write_text("\n".join(info), encoding="utf-8")
 
 
+def _load_existing_metadata(work_dir: Path, archive_dir: Path | str | None) -> dict:
+    candidates: list[Path] = []
+    if archive_dir:
+        candidates.append(Path(archive_dir) / "metadata.json")
+    candidates.append(work_dir / "publish" / "metadata.json")
+    for path in candidates:
+        data = load_json(path)
+        if isinstance(data, dict) and data:
+            return data
+    return {}
+
+
+def _reuse_publish_metadata(meta: dict) -> dict:
+    tags = meta.get("tags") or []
+    if isinstance(tags, str):
+        tags = [x.strip() for x in re.split(r"[、,\n]+", tags) if x.strip()]
+    return {
+        "title": str(meta.get("title") or ""),
+        "project_title": str(meta.get("project_title") or ""),
+        "desc": str(meta.get("desc") or ""),
+        "tags": list(tags)[:10],
+        "partition": str(meta.get("partition") or ""),
+    }
+
+
 def _cover_font(size: int):
     from PIL import ImageFont
 
@@ -257,6 +282,66 @@ def make_cover_from_image(src: Path, out_png: Path, title: str, *,
     out_png.parent.mkdir(parents=True, exist_ok=True)
     img.convert("RGB").save(out_png)
     log("archive", f"封面图已生成：{out_png.name}")
+    return out_png
+
+
+def _vertical_avatar_crop(img, target_w: int, target_h: int):
+    """Crop the left-side Jung portrait into a 9:16 frame."""
+    from PIL import Image
+
+    src_w, src_h = img.size
+    target_ratio = target_w / target_h
+    src_ratio = src_w / src_h
+    if src_ratio > target_ratio:
+        crop_w = int(src_h * target_ratio)
+        left = int(src_w * 0.035)
+        left = max(0, min(left, src_w - crop_w))
+        box = (left, 0, left + crop_w, src_h)
+    else:
+        crop_h = int(src_w / target_ratio)
+        top = max(0, (src_h - crop_h) // 2)
+        box = (0, top, src_w, top + crop_h)
+    return img.crop(box).resize((target_w, target_h), Image.LANCZOS)
+
+
+def _fit_douyin_title(draw, title: str, max_w: int, max_h: int):
+    for size in range(148, 71, -4):
+        font = _cover_font(size)
+        lines = _wrap_title(draw, title, font, max_w, max_lines=3)
+        line_h = int(font.size * 1.08)
+        if lines and len(lines) * line_h <= max_h:
+            return font, lines, line_h
+    font = _cover_font(72)
+    return font, _wrap_title(draw, title, font, max_w, max_lines=3), int(font.size * 1.08)
+
+
+def make_douyin_cover_from_image(src: Path, out_png: Path, title: str) -> Path:
+    """生成抖音用 9:16 竖版封面：裁左侧荣格头像，并在下半区叠封面标题。"""
+    from PIL import Image, ImageDraw
+
+    target_w, target_h = 1080, 1920
+    img = Image.open(src).convert("RGB")
+    img = _vertical_avatar_crop(img, target_w, target_h).convert("RGBA")
+
+    draw = ImageDraw.Draw(img, "RGBA")
+    max_w = int(target_w * 0.84)
+    max_h = int(target_h * 0.27)
+    font, lines, line_h = _fit_douyin_title(draw, title, max_w, max_h)
+    if lines:
+        total_h = len(lines) * line_h
+        x = int(target_w * 0.08)
+        y = int(target_h * 0.64)
+        stroke = max(5, int(font.size * 0.078))
+        colors = [(255, 235, 0), (255, 255, 255), (255, 235, 0)]
+        for i, line in enumerate(lines):
+            yy = y + i * line_h
+            draw.text((x + stroke, yy + stroke), line, font=font, fill=(0, 0, 0, 180))
+            draw.text((x, yy), line, font=font, fill=colors[i % len(colors)],
+                      stroke_width=stroke, stroke_fill=(8, 8, 8))
+
+    out_png.parent.mkdir(parents=True, exist_ok=True)
+    img.convert("RGB").save(out_png)
+    log("archive", f"抖音竖版封面已生成：{out_png.name}")
     return out_png
 
 
@@ -354,9 +439,17 @@ def prepare(*, work_dir: Path, final_video: Path, platform: str = "bilibili",
     if not final_video.exists():
         raise RuntimeError(f"找不到成片：{final_video}")
 
-    log("archive", f"生成保存信息…")
-    raw_meta = _gen_metadata(full_text)
-    short_cover_title = (cover_title or "").strip() or gen_title(full_text)
+    existing_meta = _load_existing_metadata(work_dir, archive_dir)
+    if existing_meta.get("title"):
+        log("archive", "复用已有保存信息和封面标题")
+        raw_meta = _reuse_publish_metadata(existing_meta)
+    else:
+        log("archive", f"生成保存信息…")
+        raw_meta = _gen_metadata(full_text)
+
+    explicit_cover_title = (cover_title or "").strip()
+    existing_cover_title = str(existing_meta.get("cover_title") or "").strip()
+    short_cover_title = explicit_cover_title or existing_cover_title or gen_title(full_text)
 
     project_title = _project_title_from_meta(raw_meta, full_text)
     theme = _theme_from_meta(raw_meta, full_text)
@@ -403,8 +496,19 @@ def prepare(*, work_dir: Path, final_video: Path, platform: str = "bilibili",
     if cover.exists():
         shutil.copy(cover, cover_dst)
 
-    selected_tid = int(tid or _tid_from_partition(raw_meta.get("partition", "")))
-    selected_copyright = int(copyright or config.BILIBILI_COPYRIGHT)
+    douyin_cover = work_dir / "douyin_cover.png"
+    if uploaded_cover and uploaded_cover.exists():
+        douyin_cover = make_douyin_cover_from_image(
+            uploaded_cover,
+            douyin_cover,
+            short_cover_title,
+        )
+    douyin_cover_dst = archive_dir / "douyin_cover.png"
+    if douyin_cover.exists():
+        shutil.copy(douyin_cover, douyin_cover_dst)
+
+    selected_tid = int(tid or existing_meta.get("tid") or _tid_from_partition(raw_meta.get("partition", "")))
+    selected_copyright = int(copyright or existing_meta.get("copyright") or config.BILIBILI_COPYRIGHT)
 
     meta = {
         "platform": platform,
@@ -424,11 +528,12 @@ def prepare(*, work_dir: Path, final_video: Path, platform: str = "bilibili",
         "tid": selected_tid,
         "copyright": selected_copyright,
         "theme": theme,
-        "created_at": datetime.now().isoformat(timespec="seconds"),
+        "created_at": existing_meta.get("created_at") or datetime.now().isoformat(timespec="seconds"),
         "archive_dir": str(archive_dir),
         "video": str(video_dst),
         "cover": str(cover_dst) if cover_dst.exists() else "",
-        "uploaded": False,
+        "douyin_cover": str(douyin_cover_dst) if douyin_cover_dst.exists() else "",
+        "uploaded": bool(existing_meta.get("uploaded", False)),
     }
 
     if mode == "upload":

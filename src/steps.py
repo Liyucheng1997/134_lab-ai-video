@@ -118,8 +118,9 @@ def run_translate(job_id: str, cfg: dict) -> dict:
     data = load_json(wd / "segments.json")
     segs = data["segments"] if isinstance(data, dict) else data
     engine = cfg.get("engine", "deepseek")
+    rewrite_level = cfg.get("rewrite_level", "low")
     before = load_json(wd / "translated.json")
-    out = translate_mod.translate(segs, wd, engine=engine)
+    out = translate_mod.translate(segs, wd, engine=engine, rewrite_level=rewrite_level)
     if before is not None and before != out:
         for name in ("dub.wav", "dub_segments.json", "dub_speed.json",
                      "compose_audio_speed.json",

@@ -145,8 +145,9 @@ def _rewrite_archive_paths(project: Path, old_project: Path) -> None:
             if isinstance(value, str) and old in value:
                 data[key] = value.replace(old, new)
         data["archive_dir"] = new
-        if (project / "video.mp4").exists():
-            data["video"] = str(project / "video.mp4")
+        video = _archive_video_path(data, project)
+        if video:
+            data["video"] = str(video)
         if data.get("cover") and (project / "cover.png").exists():
             data["cover"] = str(project / "cover.png")
         path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -269,13 +270,13 @@ def _cfg_for_step(job_id: str, step: str, cfg: dict) -> dict:
 _STEP_OUTPUTS = {
     "download": ["source.mp4", "source.wav", "source.m4a"],
     "asr": ["segments.json"],
-    "translate": ["translated.json"],
+    "translate": ["translated.json", "translated.meta.json"],
     "tts": ["dub.wav", "dub_segments.json", "dub_speed.json", "compose_audio_speed.json"],
     "compose": ["subs.srt", "subs.vtt", "subs.ass", "cover_title.txt", "cover.png", "final.mp4"],
     "publish": ["publish"],
 }
 _ARCHIVE_OUTPUTS = [
-    "video.mp4", "cover.png", "title.txt", "description.txt",
+    "video.mp4", "cover.png", "douyin_cover.png", "title.txt", "description.txt",
     "tags.txt", "publish_info.md", "metadata.json",
 ]
 _UPLOAD_KEEP_FILES = set(_ARCHIVE_OUTPUTS)
@@ -401,8 +402,9 @@ def _mark_archive_uploaded(job_id: str, uploaded: bool = True) -> dict:
 
     meta = load_json(archive_dir / "metadata.json") or meta or {}
     meta["archive_dir"] = str(archive_dir)
-    if (archive_dir / "video.mp4").exists():
-        meta["video"] = str(archive_dir / "video.mp4")
+    video = _archive_video_path(meta, archive_dir)
+    if video:
+        meta["video"] = str(video)
     if (archive_dir / "cover.png").exists():
         meta["cover"] = str(archive_dir / "cover.png")
     meta["uploaded"] = bool(uploaded)
@@ -439,7 +441,36 @@ def _remember_archive_meta(job_id: str, meta: dict | None = None) -> dict:
     return meta or {}
 
 
+def _archive_video_path(meta: dict | None, archive_dir: Path | None = None) -> Path | None:
+    meta = meta or {}
+    cand = str(meta.get("video") or "").strip()
+    if cand:
+        path = Path(cand)
+        if path.exists():
+            return path
+
+    archive_value = str(meta.get("archive_dir") or "").strip()
+    if archive_dir is None and archive_value:
+        archive_dir = Path(archive_value)
+    if not archive_dir:
+        return None
+
+    default_video = archive_dir / "video.mp4"
+    if default_video.exists():
+        return default_video
+
+    try:
+        mp4s = [p for p in archive_dir.glob("*.mp4") if p.is_file()]
+    except OSError:
+        return None
+    if not mp4s:
+        return None
+    return max(mp4s, key=lambda p: p.stat().st_mtime)
+
+
 def _archive_file(meta: dict, key: str, fallback_name: str) -> Path | None:
+    if key == "video":
+        return _archive_video_path(meta)
     cand = str(meta.get(key) or "").strip()
     if cand:
         path = Path(cand)
@@ -523,7 +554,7 @@ def _normalize_queue_item(item: dict, order: int) -> dict:
         _register_job_project(out["job_id"], out["project_dir"])
     archive_dir = Path(out["output_dir"] or out["project_dir"]) if (out["output_dir"] or out["project_dir"]) else None
     meta = load_json(archive_dir / "metadata.json") if archive_dir else None
-    if meta and (archive_dir / "video.mp4").exists():
+    if meta:
         out["status"] = "done"
         out["error"] = None
         out["ended_at"] = out.get("ended_at") or archive_dir.stat().st_mtime
@@ -1029,7 +1060,7 @@ def _queue_item_status(item: dict) -> str:
     if item.get("status") == "running":
         return "running"
     meta = _remember_archive_meta(job_id)
-    if meta and _archive_file(meta, "video", "video.mp4"):
+    if meta:
         return "done"
     if item.get("status") in {"error", "done"}:
         return item["status"]
@@ -1090,7 +1121,7 @@ def _gen_ts(meta: dict, archive_dir: Path) -> float:
 
 
 def _archive_summary(archive_dir: Path, meta: dict, job_id: str = "", item_id: str = "") -> dict:
-    video = archive_dir / "video.mp4"
+    video = _archive_video_path(meta, archive_dir)
     return {
         "job_id": job_id,
         "item_id": item_id,
@@ -1100,9 +1131,9 @@ def _archive_summary(archive_dir: Path, meta: dict, job_id: str = "", item_id: s
         "created_at": _gen_ts(meta, archive_dir),
         "uploaded": bool(meta.get("uploaded")),
         "uploaded_at": meta.get("uploaded_at", ""),
-        "has_video": video.exists(),
+        "has_video": bool(video),
         "has_cover": (archive_dir / "cover.png").exists(),
-        "duration_sec": media_duration(video) if video.exists() else 0,
+        "duration_sec": media_duration(video) if video else 0,
     }
 
 
@@ -1116,7 +1147,7 @@ def _archive_list() -> list[dict]:
                 continue
             archive_dir = Path(value)
             meta = load_json(archive_dir / "metadata.json") or {}
-            if meta and meta.get("uploaded") and (archive_dir / "video.mp4").exists():
+            if meta and meta.get("uploaded"):
                 by_dir[str(archive_dir.resolve()).lower()] = _archive_summary(
                     archive_dir, meta, item.get("job_id", ""), item.get("id", ""))
                 break
@@ -1126,7 +1157,7 @@ def _archive_list() -> list[dict]:
         if key in by_dir:
             continue
         meta = load_json(meta_path) or {}
-        if meta and meta.get("uploaded") and (archive_dir / "video.mp4").exists():
+        if meta and meta.get("uploaded"):
             by_dir[key] = _archive_summary(archive_dir, meta)
     # 按生成时间（created_at，epoch 秒）倒序，最新的在最上面。
     return sorted(by_dir.values(), key=lambda it: float(it.get("created_at") or 0), reverse=True)
@@ -1269,11 +1300,20 @@ def get_config():
         "whisper_models": ["small", "large-v3-turbo"],
         "engines": [{"key": "deepseek", "name": "DeepSeek（大模型，质量高）"},
                     {"key": "google", "name": "Google 翻译（免费，快）"}],
+        "rewrite_levels": [
+            {"key": "low", "name": "低级洗稿（轻度润色）"},
+            {"key": "medium", "name": "中级洗稿（中文化改写）"},
+            {"key": "high", "name": "高级洗稿（深度顺稿）"},
+        ],
         "sub_presets": config.SUB_PRESETS,
         "sub_preset_default": config.SUB_PRESET,
         "sub_cover_default": config.SUB_COVER_DEFAULT,
         "sub_cover_opacity_default": config.SUB_COVER_OPACITY,
         "sub_cover_height_default": config.SUB_COVER_HEIGHT,
+        "cover_title_x_default": config.DEFAULT_COVER_TITLE_X,
+        "cover_title_y_default": config.DEFAULT_COVER_TITLE_Y,
+        "cover_title_width_default": config.DEFAULT_COVER_TITLE_WIDTH,
+        "cover_title_font_size_default": config.DEFAULT_COVER_TITLE_FONT_SIZE,
         "default_cover_available": config.DEFAULT_COVER_IMAGE.exists(),
         "has_deepseek": bool(config.DEEPSEEK_API_KEY),
         "bilibili_logged_in": Path(config.BILIBILI_COOKIE_FILE).exists(),
@@ -1631,8 +1671,9 @@ def mark_archive_uploaded(payload: dict = Body(...)):
         return _mark_archive_uploaded(job_id, True)
 
     meta["archive_dir"] = str(archive_dir)
-    if (archive_dir / "video.mp4").exists():
-        meta["video"] = str(archive_dir / "video.mp4")
+    video = _archive_video_path(meta, archive_dir)
+    if video:
+        meta["video"] = str(video)
     if (archive_dir / "cover.png").exists():
         meta["cover"] = str(archive_dir / "cover.png")
     meta["uploaded"] = True
