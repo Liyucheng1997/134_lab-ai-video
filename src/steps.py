@@ -118,7 +118,7 @@ def run_translate(job_id: str, cfg: dict) -> dict:
     data = load_json(wd / "segments.json")
     segs = data["segments"] if isinstance(data, dict) else data
     engine = cfg.get("engine", "deepseek")
-    rewrite_level = cfg.get("rewrite_level", "low")
+    rewrite_level = cfg.get("rewrite_level", "high")
     before = load_json(wd / "translated.json")
     out = translate_mod.translate(segs, wd, engine=engine, rewrite_level=rewrite_level)
     if before is not None and before != out:

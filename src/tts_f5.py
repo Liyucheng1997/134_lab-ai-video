@@ -231,7 +231,7 @@ def synthesize(segments: list[dict], work_dir: Path, total_duration: float = 0.0
     n = len(segments)
     jobs = [(i, seg, (seg.get("zh") or "").strip())
             for i, seg in enumerate(segments) if (seg.get("zh") or "").strip()]
-    parallel = max(1, min(int(getattr(config, "F5_TTS_PARALLEL", 1)), len(jobs) or 1))
+    parallel = max(1, min(int(getattr(config, "F5_TTS_PARALLEL", 4)), len(jobs) or 1))
     log("tts", f"使用 F5-TTS / {config.TTS_VOICE} 原速合成配音，共 {n} 段，并发 {parallel}")
 
     # 先并发生成各段音频，再按原段落顺序拼接，保证字幕时间线稳定。

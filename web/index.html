@@ -606,7 +606,7 @@ function speedOptions(){
   return opts.map(x=>`<option value="${x.toFixed(2)}" ${x===best?"selected":""}>${x.toFixed(2)}x</option>`).join("");
 }
 function f5ParallelOptions(){
-  const cur=Math.max(1,Math.min(4,+(CFG.f5_parallel_default||2)));
+  const cur=Math.max(1,Math.min(4,+(CFG.f5_parallel_default||4)));
   return [1,2,3,4].map(x=>`<option value="${x}" ${x===cur?"selected":""}>${x} 条</option>`).join("");
 }
 let warmupTimer=null;
@@ -676,9 +676,9 @@ function cfgHtml(key){
       <div><label>翻译引擎</label>
         <select id="tr-engine">${CFG.engines.map(e=>`<option value="${e.key}">${e.name}</option>`).join("")}</select></div>
       <div><label>AI 洗稿档位</label>
-        <select id="tr-rewrite">${(CFG.rewrite_levels||[]).map(e=>`<option value="${e.key}">${e.name}</option>`).join("")}</select></div>
+        <select id="tr-rewrite">${(CFG.rewrite_levels||[]).map(e=>`<option value="${e.key}" ${e.key===(CFG.rewrite_level_default||"high")?"selected":""}>${e.name}</option>`).join("")}</select></div>
       </div>
-      <div class="hint">洗稿只改变中文表达方式，不改变原意；DeepSeek 会按所选档位让译文更连贯、更符合中文阅读习惯。</div>
+      <div class="hint">DeepSeek 会先把英文字幕合成完整文章，再整体中译、清除广告并按中文自然分句；“深度顺稿”会拆解英文长句、修顺原文，并清除引号和破折号等书面停顿。</div>
       ${CFG.has_deepseek?"":'<div class="hint">⚠ 未配置 DEEPSEEK_API_KEY，请用 Google 或在 .env 填 key。</div>'}`;
   if(key==="tts")return `
       <label>配音引擎</label>
@@ -894,9 +894,9 @@ function updateComposeAudioPreview(force=false){
 function collect(step,forceTts){const g=id=>document.getElementById(id);
   if(step==="download")return {url:(g("dl-url")||{}).value?.trim()||"",media:"video"};
   if(step==="asr")return {model:g("asr-model").value,language:g("asr-lang").value};
-  if(step==="translate")return {engine:g("tr-engine").value,rewrite_level:g("tr-rewrite")?.value||"low"};
+  if(step==="translate")return {engine:g("tr-engine").value,rewrite_level:g("tr-rewrite")?.value||CFG.rewrite_level_default||"high"};
   if(step==="tts")return {engine:(g("tts-engine")||{}).value||CFG.tts_engine_default,voice:g("tts-voice").value,
-    speed:g("tts-speed").value,f5_parallel:+(g("f5-parallel")?.value||CFG.f5_parallel_default||2),force:!!forceTts};
+    speed:g("tts-speed").value,f5_parallel:+(g("f5-parallel")?.value||CFG.f5_parallel_default||4),force:!!forceTts};
   if(step==="compose")return {mode:"original",audio_speed:g("cm-audio-speed")?.value||"1.00",
     preset:g("cm-preset").value,
     fontsize:+(g("cm-fontsize")?.value||0),position:g("cm-position")?.value||"",
