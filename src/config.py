@@ -127,6 +127,16 @@ _load_env()
 DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY", "")
 DEEPSEEK_BASE_URL = os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
 DEEPSEEK_MODEL = os.environ.get("DEEPSEEK_MODEL", "deepseek-chat")
+try:
+    DEEPSEEK_MAX_OUTPUT_TOKENS = int(os.environ.get("DEEPSEEK_MAX_OUTPUT_TOKENS", "8192"))
+except ValueError:
+    DEEPSEEK_MAX_OUTPUT_TOKENS = 8192
+DEEPSEEK_MAX_OUTPUT_TOKENS = max(2048, min(32768, DEEPSEEK_MAX_OUTPUT_TOKENS))
+try:
+    TRANSLATE_MAX_ZH_SEGMENT_CHARS = int(os.environ.get("TRANSLATE_MAX_ZH_SEGMENT_CHARS", "42"))
+except ValueError:
+    TRANSLATE_MAX_ZH_SEGMENT_CHARS = 42
+TRANSLATE_MAX_ZH_SEGMENT_CHARS = max(0, min(120, TRANSLATE_MAX_ZH_SEGMENT_CHARS))
 
 # ---------------------------------------------------------------- ASR
 # faster-whisper-small 已离线缓存；large-v3-turbo 质量更好但首次需联网下载 CT2 权重。
@@ -146,9 +156,9 @@ TTS_GAP_MAX = float(os.environ.get("TTS_GAP_MAX", "0.45"))
 F5_REF_AUDIO = os.environ.get("TTS_REF_AUDIO", "")   # 自定义参考音频（wav/flac），留空用内置音色
 F5_REF_TEXT = os.environ.get("TTS_REF_TEXT", "")     # 自定义参考音频对应的文字
 try:
-    F5_TTS_PARALLEL = int(os.environ.get("F5_TTS_PARALLEL", "2"))
+    F5_TTS_PARALLEL = int(os.environ.get("F5_TTS_PARALLEL", "4"))
 except ValueError:
-    F5_TTS_PARALLEL = 2
+    F5_TTS_PARALLEL = 4
 F5_TTS_PARALLEL = max(1, min(4, F5_TTS_PARALLEL))
 
 # ---------------------------------------------------------------- 字幕样式
