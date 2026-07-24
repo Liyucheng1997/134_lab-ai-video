@@ -12,23 +12,50 @@ from . import config
 from .utils import ass_timestamp, log, srt_timestamp
 
 
-def _wrap(text: str, max_per_line: int = 18) -> str:
-    """中文按字数折行，最多两行。"""
+def _wrap(
+    text: str,
+    max_per_line: int = 18,
+    mode: str = "balanced",
+) -> str:
+    """中文按画布允许的字数折行，优先在标点处断开。"""
     text = text.replace("\n", " ").strip()
     if len(text) <= max_per_line:
         return text
-    # 尽量在中点附近的标点处断开
-    mid = len(text) // 2
-    best = mid
-    for off in range(0, mid):
-        for j in (mid - off, mid + off):
-            if 0 < j < len(text) and text[j] in "，。！？、；：,.!?;: ":
-                best = j + 1
-                break
+    max_per_line = max(1, int(max_per_line))
+    normalized_mode = str(mode or "").strip().lower()
+    fixed = normalized_mode == "fixed"
+    wide = normalized_mode == "wide"
+    punctuation = "，。！？、；：,.!?;: "
+    lines: list[str] = []
+    remaining = text
+    while len(remaining) > max_per_line:
+        if fixed:
+            cut = max_per_line
         else:
-            continue
-        break
-    return text[:best].strip() + "\\N" + text[best:].strip()
+            if wide:
+                target = max_per_line
+                lower = max(1, target - 4)
+                upper = min(target, len(remaining) - 1)
+            else:
+                line_count = (len(remaining) + max_per_line - 1) // max_per_line
+                target = (len(remaining) + line_count - 1) // line_count
+                lower = max(1, target - 2)
+                upper = min(max_per_line, len(remaining) - 1, target + 2)
+            candidates = [
+                index
+                for index in range(lower, upper + 1)
+                if remaining[index - 1] in punctuation
+            ]
+            cut = (
+                min(candidates, key=lambda index: abs(index - target))
+                if candidates
+                else target
+            )
+        lines.append(remaining[:cut].strip())
+        remaining = remaining[cut:].strip()
+    if remaining:
+        lines.append(remaining)
+    return "\\N".join(lines)
 
 
 def _text(s: dict, bilingual: bool) -> str:
@@ -74,8 +101,8 @@ def cue_list(segments: list[dict]) -> list[dict]:
 
 _ASS_HEADER = """[Script Info]
 ScriptType: v4.00+
-PlayResX: 1920
-PlayResY: 1080
+PlayResX: {play_res_x}
+PlayResY: {play_res_y}
 WrapStyle: 2
 ScaledBorderAndShadow: yes
 
@@ -108,12 +135,42 @@ def write_ass(segments: list[dict], work_dir: Path, bilingual: bool = False,
     primary = _hex_to_ass(s.get("primary", config.SUB_PRIMARY))
     outline = _hex_to_ass(s.get("outline", config.SUB_OUTLINE))
     bold = -1 if str(s.get("bold", config.SUB_BOLD)) in ("1", "True", "true") else 0
-    align, marginv = _ALIGN.get(s.get("position", config.SUB_POSITION), _ALIGN["bottom"])
+    align, default_marginv = _ALIGN.get(
+        s.get("position", config.SUB_POSITION), _ALIGN["bottom"]
+    )
+    marginv = int(s.get("marginv", default_marginv))
+    play_res_x = int(s.get("play_res_x", 1920))
+    play_res_y = int(s.get("play_res_y", 1080))
+    wrap_mode = str(s.get("wrap_mode") or "balanced")
+    if s.get("max_chars_per_line") is not None:
+        max_chars_per_line = max(1, int(s["max_chars_per_line"]))
+    elif play_res_y > play_res_x:
+        # 竖屏不能沿用横屏的 18 字单行；为左右安全边距和描边留出空间。
+        usable_width = max(1, play_res_x - 180)
+        max_chars_per_line = max(
+            6,
+            min(18, int(usable_width / max(1, size * 1.08))),
+        )
+    else:
+        max_chars_per_line = 18
     # PlayRes 固定 1080p，字号为该画布下的绝对值；libass 会随实际分辨率自动缩放
-    out = [_ASS_HEADER.format(font=font, size=size, primary=primary, outline=outline,
-                              bold=bold, align=align, marginv=marginv)]
+    out = [_ASS_HEADER.format(
+        play_res_x=play_res_x,
+        play_res_y=play_res_y,
+        font=font,
+        size=size,
+        primary=primary,
+        outline=outline,
+        bold=bold,
+        align=align,
+        marginv=marginv,
+    )]
     for s in segments:
-        zh = _wrap(s.get("zh", "").strip())
+        zh = _wrap(
+            s.get("zh", "").strip(),
+            max_chars_per_line,
+            mode=wrap_mode,
+        )
         if not zh:
             continue
         if bilingual and s.get("text"):

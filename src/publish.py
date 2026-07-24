@@ -16,7 +16,7 @@ from pathlib import Path
 
 import requests
 
-from . import config
+from . import config, profiles
 from .utils import load_json, log, save_json
 
 _FONT_BOLD = r"C:\Windows\Fonts\msyhbd.ttc"
@@ -240,12 +240,13 @@ def _wrap_title(draw, title: str, font, max_w: int, max_lines: int = 3) -> list[
 
 def make_cover_from_image(src: Path, out_png: Path, title: str, *,
                           x: float = 0.07, y: float = 0.10,
-                          font_size: int = 132, box_width: float = 0.62) -> Path:
-    """用户上传底图 + 标题叠字，输出 16:9 封面。坐标/宽度为 0~1 归一化值。"""
+                          font_size: int = 132, box_width: float = 0.62,
+                          target_size: tuple[int, int] = (1920, 1080)) -> Path:
+    """用户上传底图 + 标题叠字。坐标/宽度为 0~1 归一化值。"""
     from PIL import Image, ImageDraw
 
     img = Image.open(src).convert("RGB")
-    target_w, target_h = 1920, 1080
+    target_w, target_h = target_size
     scale = max(target_w / img.width, target_h / img.height)
     nw, nh = int(img.width * scale), int(img.height * scale)
     img = img.resize((nw, nh), Image.LANCZOS)
@@ -315,8 +316,9 @@ def _fit_douyin_title(draw, title: str, max_w: int, max_h: int):
     return font, _wrap_title(draw, title, font, max_w, max_lines=3), int(font.size * 1.08)
 
 
-def make_douyin_cover_from_image(src: Path, out_png: Path, title: str) -> Path:
-    """生成抖音用 9:16 竖版封面：裁左侧荣格头像，并在下半区叠封面标题。"""
+def make_douyin_cover_from_image(src: Path, out_png: Path, title: str, *,
+                                 header: str = "") -> Path:
+    """生成抖音用 9:16 竖版封面，可在顶部增加固定品牌字。"""
     from PIL import Image, ImageDraw
 
     target_w, target_h = 1080, 1920
@@ -324,6 +326,51 @@ def make_douyin_cover_from_image(src: Path, out_png: Path, title: str) -> Path:
     img = _vertical_avatar_crop(img, target_w, target_h).convert("RGBA")
 
     draw = ImageDraw.Draw(img, "RGBA")
+    header = (header or "").strip()
+    if header:
+        header_font_size = 136
+        header_font = _cover_font(header_font_size)
+        header_stroke = max(5, int(header_font_size * 0.075))
+        max_header_w = int(target_w * 0.84)
+        header_box = draw.textbbox(
+            (0, 0), header, font=header_font, stroke_width=header_stroke
+        )
+        while header_box[2] - header_box[0] > max_header_w and header_font_size > 64:
+            header_font_size -= 4
+            header_font = _cover_font(header_font_size)
+            header_stroke = max(5, int(header_font_size * 0.075))
+            header_box = draw.textbbox(
+                (0, 0), header, font=header_font, stroke_width=header_stroke
+            )
+        header_w = header_box[2] - header_box[0]
+        header_x = (target_w - header_w) // 2 - header_box[0]
+        header_y = int(target_h * 0.10) - header_box[1]
+        pad_x, pad_y = 34, 24
+        draw.rounded_rectangle(
+            [
+                header_x + header_box[0] - pad_x,
+                header_y + header_box[1] - pad_y,
+                header_x + header_box[2] + pad_x,
+                header_y + header_box[3] + pad_y,
+            ],
+            radius=24,
+            fill=(0, 0, 0, 92),
+        )
+        draw.text(
+            (header_x + header_stroke, header_y + header_stroke),
+            header,
+            font=header_font,
+            fill=(0, 0, 0, 185),
+        )
+        draw.text(
+            (header_x, header_y),
+            header,
+            font=header_font,
+            fill=(255, 235, 0),
+            stroke_width=header_stroke,
+            stroke_fill=(8, 8, 8),
+        )
+
     max_w = int(target_w * 0.84)
     max_h = int(target_h * 0.27)
     font, lines, line_h = _fit_douyin_title(draw, title, max_w, max_h)
@@ -430,7 +477,9 @@ def prepare(*, work_dir: Path, final_video: Path, platform: str = "bilibili",
             cover_x: float = config.DEFAULT_COVER_TITLE_X,
             cover_y: float = config.DEFAULT_COVER_TITLE_Y,
             cover_font_size: int = config.DEFAULT_COVER_TITLE_FONT_SIZE,
-            cover_width: float = config.DEFAULT_COVER_TITLE_WIDTH) -> dict:
+            cover_width: float = config.DEFAULT_COVER_TITLE_WIDTH,
+            douyin_cover_header: str = "",
+            archive_profile: str | None = None) -> dict:
     """生成保存信息包并归档，返回 metadata dict。"""
     translated = load_json(work_dir / "translated.json") or []
     full_text = "".join(s.get("zh", "") for s in translated)[:4000]
@@ -440,6 +489,9 @@ def prepare(*, work_dir: Path, final_video: Path, platform: str = "bilibili",
         raise RuntimeError(f"找不到成片：{final_video}")
 
     existing_meta = _load_existing_metadata(work_dir, archive_dir)
+    archive_profile = profiles.normalize_profile(
+        archive_profile or existing_meta.get("archive_profile")
+    )
     if existing_meta.get("title"):
         log("archive", "复用已有保存信息和封面标题")
         raw_meta = _reuse_publish_metadata(existing_meta)
@@ -502,6 +554,7 @@ def prepare(*, work_dir: Path, final_video: Path, platform: str = "bilibili",
             uploaded_cover,
             douyin_cover,
             short_cover_title,
+            header=douyin_cover_header,
         )
     douyin_cover_dst = archive_dir / "douyin_cover.png"
     if douyin_cover.exists():
@@ -519,6 +572,7 @@ def prepare(*, work_dir: Path, final_video: Path, platform: str = "bilibili",
         "partition": raw_meta.get("partition", ""),
         "project_title": project_title,
         "cover_title": short_cover_title,
+        "douyin_cover_header": (douyin_cover_header or "").strip(),
         "cover_layout": {
             "x": float(cover_x if cover_x is not None else config.DEFAULT_COVER_TITLE_X),
             "y": float(cover_y if cover_y is not None else config.DEFAULT_COVER_TITLE_Y),
@@ -528,6 +582,7 @@ def prepare(*, work_dir: Path, final_video: Path, platform: str = "bilibili",
         "tid": selected_tid,
         "copyright": selected_copyright,
         "theme": theme,
+        "archive_profile": archive_profile,
         "created_at": existing_meta.get("created_at") or datetime.now().isoformat(timespec="seconds"),
         "archive_dir": str(archive_dir),
         "video": str(video_dst),

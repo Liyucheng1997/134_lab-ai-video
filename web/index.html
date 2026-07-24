@@ -63,6 +63,11 @@
   .qhead{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px}
   .qtitle{font-size:17px;font-weight:800}
   .qsum{font-size:12px;color:var(--mut)}
+  .profile-switch{display:flex;align-items:center;gap:3px;border:1px solid var(--line);background:rgba(255,255,255,.56);
+    border-radius:11px;padding:3px;box-shadow:0 6px 18px rgba(60,72,140,.08)}
+  .profile-switch button{border:0;background:transparent;border-radius:8px;padding:6px 9px;color:var(--mut);
+    font:inherit;font-size:12px;font-weight:800;line-height:1.1;cursor:pointer;white-space:nowrap}
+  .profile-switch button.active{background:#fff;color:var(--brand);box-shadow:0 4px 11px rgba(60,72,140,.14)}
   .qinput{min-height:96px}
   .qactions{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
   .qactions .btn{margin-top:0;padding:9px 12px;font-size:13px;border-radius:10px}
@@ -303,8 +308,13 @@
   .subprev{position:relative;height:210px;border-radius:14px;margin-top:8px;overflow:hidden;
     background:linear-gradient(135deg,#243049,#3a2c56 60%,#2b3a4a);display:flex;justify-content:center;
     align-items:flex-end;padding:20px;border:1px solid var(--glass)}
+  .subprev.vertical{width:236px;height:420px;margin-left:auto;margin-right:auto}
   .subprev::after{content:"画面示意";position:absolute;top:10px;left:14px;font-size:12px;color:rgba(255,255,255,.45)}
   #sub-prev-text{max-width:92%;text-align:center;line-height:1.35;word-break:break-word;position:relative;z-index:3}
+  .image-main-title{position:absolute;z-index:2;color:#ffeb00;font-weight:900;line-height:1.08;
+    text-shadow:2px 2px 0 #050505,-2px 2px 0 #050505,2px -2px 0 #050505,-2px -2px 0 #050505;
+    background:rgba(0,0,0,.34);border:1px dashed rgba(255,255,255,.55);border-radius:6px;
+    padding:5px;word-break:break-word;white-space:pre-wrap;pointer-events:none}
   /* 原片烧死的英文字幕（示意）：盖底条开启时被遮住 */
   .sub-prev-orig{position:absolute;left:0;right:0;bottom:12%;z-index:1;text-align:center;pointer-events:none;
     font-size:clamp(13px,3.2vw,21px);font-weight:700;color:#fff;font-style:italic;
@@ -358,7 +368,12 @@
             <div class="qtitle">星星队列</div>
             <div class="qsum" id="qsum">0 颗星</div>
           </div>
+          <div class="profile-switch" aria-label="默认创作配置">
+            <button id="profile-jung" onclick="setCreationProfile('jung')" aria-pressed="true">荣格</button>
+            <button id="profile-naval" onclick="setCreationProfile('naval')" aria-pressed="false">纳瓦尔</button>
+          </div>
         </div>
+        <div class="hint" id="profile-description">英语源 · 人工老龙凤 · 原视频画面</div>
         <label>添加星星链接（可一次粘贴多行）</label>
         <textarea id="queue-links" class="qinput" placeholder="https://...&#10;https://..."></textarea>
         <div class="qactions">
@@ -404,6 +419,10 @@
         <div class="archive-library-count" id="archive-library-count">0 个已上传</div>
       </div>
       <div class="archive-library-tools">
+        <div class="profile-switch" aria-label="档案分类">
+          <button id="archive-profile-jung" onclick="setArchiveProfile('jung')" aria-pressed="true">荣格</button>
+          <button id="archive-profile-naval" onclick="setArchiveProfile('naval')" aria-pressed="false">纳瓦尔</button>
+        </div>
         <div class="archive-sort" aria-label="档案排序方式">
           <button class="archive-sort-btn active" id="archive-sort-desc" onclick="setArchiveSort('desc')" aria-pressed="true">新→旧</button>
           <button class="archive-sort-btn" id="archive-sort-asc" onclick="setArchiveSort('asc')" aria-pressed="false">旧→新</button>
@@ -436,23 +455,90 @@
 
 <script>
 const API="";
-let JOB=null,CFG=null,ST=null,QST=null,ARCHIVES=[],prev={},dlFile=null,coverFile=null,coverImgUrl="",srcMode="link",jobES=null,queueES=null;
+let JOB=null,CFG=null,ST=null,QST=null,ARCHIVES=[],prev={},dlFile=null,composeImageFile=null,composeImageUrl="",coverFile=null,coverImgUrl="",srcMode="link",jobES=null,queueES=null;
+let ACTIVE_PROFILE=localStorage.getItem("creationProfile")||"jung";
+let ARCHIVE_PROFILE=localStorage.getItem("archiveProfile")||ACTIVE_PROFILE;
 let ARCHIVE_SORT=localStorage.getItem("archiveSort")||"desc";
 const logOpen=new Set(), pvOpen=new Set();
 
 const STEPS=[
-  {key:"download",name:"视频下载"},{key:"asr",name:"语音识别"},{key:"translate",name:"中文翻译"},
+  {key:"download",name:"视频下载"},{key:"asr",name:"语音识别"},{key:"translate",name:"翻译/洗稿"},
   {key:"tts",name:"中文配音"},{key:"compose",name:"视频合成"},{key:"publish",name:"灯火归档"},
 ];
 const BADGE={pending:"待点灯",running:"点灯中",done:"已点亮",error:"出错"};
 
 async function init(){
   CFG=await (await fetch(API+"/api/config")).json();
+  if(!(CFG.profiles||[]).some(p=>p.key===ACTIVE_PROFILE))ACTIVE_PROFILE=CFG.profile_default||"jung";
+  if(!(CFG.profiles||[]).some(p=>p.key===ARCHIVE_PROFILE))ARCHIVE_PROFILE=ACTIVE_PROFILE;
   JOB=(await (await fetch(API+"/api/jobs",{method:"POST"})).json()).job_id;
-  buildStrip(); buildCards(); openSSE(); openQueueSSE(); startSampleWarmup(); startGpuStatus(); startArchivePoll();
+  buildStrip(); buildCards(); applyCreationProfile(ACTIVE_PROFILE,false);
+  openSSE(); openQueueSSE(); startSampleWarmup(); startGpuStatus(); startArchivePoll();
 }
 function esc(s){return (s||"").replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));}
 function escAttr(s){return esc(s).replace(/"/g,"&quot;");}
+function currentProfile(){return (CFG.profiles||[]).find(p=>p.key===ACTIVE_PROFILE)||(CFG.profiles||[])[0]||{};}
+function syncProfileButtons(){
+  ["jung","naval"].forEach(key=>{
+    const main=document.getElementById("profile-"+key),archive=document.getElementById("archive-profile-"+key);
+    if(main){main.classList.toggle("active",key===ACTIVE_PROFILE);main.setAttribute("aria-pressed",key===ACTIVE_PROFILE?"true":"false");}
+    if(archive){archive.classList.toggle("active",key===ARCHIVE_PROFILE);archive.setAttribute("aria-pressed",key===ARCHIVE_PROFILE?"true":"false");}
+  });
+}
+function setCreationProfile(key){applyCreationProfile(key,true);}
+function applyCreationProfile(key,persist=true){
+  const selected=(CFG.profiles||[]).find(p=>p.key===key);
+  if(!selected)return;
+  ACTIVE_PROFILE=selected.key;
+  if(persist)localStorage.setItem("creationProfile",ACTIVE_PROFILE);
+  const desc=document.getElementById("profile-description");if(desc)desc.textContent=selected.description||"";
+  const asr=document.getElementById("asr-lang");if(asr)asr.value=selected.asr_language||"";
+  const trEngine=document.getElementById("tr-engine");if(trEngine)trEngine.value=selected.translate_engine||"deepseek";
+  const rewrite=document.getElementById("tr-rewrite");if(rewrite)rewrite.value=selected.rewrite_level||"high";
+  const ttsEngine=document.getElementById("tts-engine");if(ttsEngine)ttsEngine.value=selected.tts_engine||"f5";
+  renderVoiceOptions(selected.tts_engine,selected.tts_voice);
+  const voice=document.getElementById("tts-voice");if(voice)voice.value=selected.tts_voice||"";
+  const speed=document.getElementById("tts-speed");if(speed)speed.value=(+(selected.tts_speed||1)).toFixed(2);
+  const parallel=document.getElementById("f5-parallel");if(parallel)parallel.value=String(selected.tts_parallel||4);
+  const mode=document.getElementById("cm-mode");if(mode)mode.value=selected.compose_mode||"original";
+  const titleEnabled=document.getElementById("cm-image-title-enabled");
+  if(titleEnabled)titleEnabled.checked=!!selected.image_title_enabled;
+  const titleInput=document.getElementById("cm-image-title");
+  if(titleInput)titleInput.value=selected.image_title||"";
+  const titleFont=document.getElementById("cm-image-title-font");
+  if(titleFont)titleFont.value=String(selected.image_title_font_size||110);
+  const titleWidth=document.getElementById("cm-image-title-width");
+  if(titleWidth)titleWidth.value=String(Math.round((selected.image_title_width||.84)*100));
+  const titleX=document.getElementById("cm-image-title-x");
+  if(titleX)titleX.value=String(Math.round((selected.image_title_x||0)*100));
+  const titleY=document.getElementById("cm-image-title-y");
+  if(titleY)titleY.value=String(Math.round((selected.image_title_y||0)*100));
+  const subtitlePosition=document.getElementById("cm-position");
+  if(subtitlePosition)subtitlePosition.value=selected.subtitle_position||"bottom";
+  const subtitleFont=document.getElementById("cm-fontsize");
+  if(subtitleFont)subtitleFont.value=String(selected.subtitle_fontsize||70);
+  composeImageFile=null;
+  if(composeImageUrl&&composeImageUrl.startsWith("blob:"))URL.revokeObjectURL(composeImageUrl);
+  composeImageUrl=selected.image_available?selected.image_url:"";
+  const imageInput=document.getElementById("cm-image-file");if(imageInput)imageInput.value="";
+  const imageName=document.getElementById("cm-image-name");
+  if(imageName)imageName.textContent=selected.compose_mode==="image"
+    ?`已加载${selected.name}默认图片，将裁切填充到 ${selected.canvas_width||1920}×${selected.canvas_height||1080}。`
+    :"切换到图片模式后可上传自定义图片。";
+  coverFile=null;
+  if(coverImgUrl&&coverImgUrl.startsWith("blob:"))URL.revokeObjectURL(coverImgUrl);
+  coverImgUrl="";
+  const coverInput=document.getElementById("cover-file");if(coverInput)coverInput.value="";
+  const coverImg=document.getElementById("cover-img");
+  if(coverImg&&selected.image_available)coverImg.src=`${selected.image_url}?t=${Date.now()}`;
+  updateComposeMode();
+  updateCoverPreviewStyle();
+  updateCoverPreviewText();
+  ARCHIVE_PROFILE=ACTIVE_PROFILE;
+  localStorage.setItem("archiveProfile",ARCHIVE_PROFILE);
+  syncProfileButtons();
+  renderArchives();
+}
 function fmt(s){s=Math.max(0,s|0);const m=(s/60)|0,x=s%60;return `${String(m).padStart(2,"0")}:${String(x).padStart(2,"0")}`;}
 function fmtDur(s){s=Math.max(0,Math.round(+s||0));const h=Math.floor(s/3600),m=Math.floor((s%3600)/60),x=s%60;
   if(h)return `${h}时${String(m).padStart(2,"0")}分`;
@@ -585,9 +671,9 @@ function voiceOptions(engineKey, selectedVoice){
     const state=ready.has(v)?"已缓存":(st.running?"正在生成":"未缓存");
     return `<option value="${escAttr(v)}" ${v===picked?"selected":""}>${esc(v)}（${state}）</option>`;
   }).join("");}
-function renderVoiceOptions(engineKey){
+function renderVoiceOptions(engineKey,selectedVoice){
   const sel=document.getElementById("tts-voice");if(!sel)return;
-  sel.innerHTML=voiceOptions(engineKey||curTtsEngineKey(),sel.value);
+  sel.innerHTML=voiceOptions(engineKey||curTtsEngineKey(),selectedVoice||sel.value);
 }
 function onTtsEngineChange(){
   const e=ttsEngine(curTtsEngineKey());
@@ -670,7 +756,7 @@ function cfgHtml(key){
   if(key==="asr")return `<div class="rowf">
       <div><label>识别精度</label><select id="asr-model">${CFG.whisper_models.map(m=>`<option value="${m}">${m==="small"?"标准 small（快）":"高精度 "+m}</option>`).join("")}</select></div>
       <div><label>源语言</label><select id="asr-lang"><option value="">自动检测</option>
-        <option value="en">英语</option><option value="ja">日语</option><option value="ko">韩语</option>
+        <option value="zh">中文</option><option value="en">英语</option><option value="ja">日语</option><option value="ko">韩语</option>
         <option value="fr">法语</option><option value="de">德语</option><option value="es">西班牙语</option><option value="ru">俄语</option></select></div></div>`;
   if(key==="translate")return `<div class="rowf">
       <div><label>翻译引擎</label>
@@ -678,7 +764,7 @@ function cfgHtml(key){
       <div><label>AI 洗稿档位</label>
         <select id="tr-rewrite">${(CFG.rewrite_levels||[]).map(e=>`<option value="${e.key}" ${e.key===(CFG.rewrite_level_default||"high")?"selected":""}>${e.name}</option>`).join("")}</select></div>
       </div>
-      <div class="hint">DeepSeek 会先把英文字幕合成完整文章，再整体中译、清除广告并按中文自然分句；“深度顺稿”会拆解英文长句、修顺原文，并清除引号和破折号等书面停顿。</div>
+      <div class="hint">自动识别源语言：外语会整体中译；中文会先生成英文语义稿，再仅依据英文稿创作全新中文口播稿，从源头避开中文原句措辞。两种模式都会清除广告并修复转写断句。纳瓦尔竖屏配置会强制把人物名 Naval 译写为“纳瓦尔”，全文完成后按 30 字上限分句，第五步再按每行 15 字显示为最多两行；原创度不合格时只重做英文到中文这一步。</div>
       ${CFG.has_deepseek?"":'<div class="hint">⚠ 未配置 DEEPSEEK_API_KEY，请用 Google 或在 .env 填 key。</div>'}`;
   if(key==="tts")return `
       <label>配音引擎</label>
@@ -695,6 +781,34 @@ function cfgHtml(key){
         <select id="f5-parallel">${f5ParallelOptions()}</select>
       </div>`;
   if(key==="compose")return `
+      <div class="rowf">
+        <div><label>画面来源</label><select id="cm-mode" onchange="updateComposeMode()">
+          <option value="original">使用原视频画面</option>
+          <option value="image">使用一张图片</option>
+        </select></div>
+        <div id="cm-image-box" class="hide" style="flex:1 1 100%"><label>上传画面图片</label>
+          <input type="file" id="cm-image-file" accept="image/png,image/jpeg,image/webp">
+          <div class="hint" id="cm-image-name">图片会等比缩放并补边到 1920×1080，时长跟随配音。</div>
+          <div style="margin-top:10px">
+            <span class="radio"><input type="checkbox" id="cm-image-title-enabled" onchange="updateImageTitlePreview()"> 固定画面顶部文字</span>
+          </div>
+          <label>画面文字</label>
+          <textarea id="cm-image-title" rows="2" oninput="updateImageTitlePreview()" placeholder="留空则根据中文稿自动生成"></textarea>
+          <div class="rowf" style="flex-wrap:nowrap;gap:14px">
+            <div><label>字号 <span id="cm-image-title-font-val">110</span></label>
+              <input type="range" id="cm-image-title-font" min="48" max="180" step="2" value="110" oninput="updateImageTitlePreview()"></div>
+            <div><label>文字宽度 <span id="cm-image-title-width-val">84%</span></label>
+              <input type="range" id="cm-image-title-width" min="25" max="90" step="1" value="84" oninput="updateImageTitlePreview()"></div>
+          </div>
+          <div class="rowf" style="flex-wrap:nowrap;gap:14px">
+            <div><label>左右位置 <span id="cm-image-title-x-val">10%</span></label>
+              <input type="range" id="cm-image-title-x" min="0" max="80" step="1" value="10" oninput="updateImageTitlePreview()"></div>
+            <div><label>上下位置 <span id="cm-image-title-y-val">13%</span></label>
+              <input type="range" id="cm-image-title-y" min="0" max="60" step="1" value="13" oninput="updateImageTitlePreview()"></div>
+          </div>
+          <div class="hint">沿用第 6 步黄白大字、黑色描边和半透明底板风格。</div>
+        </div>
+      </div>
       <label>配音二次变速</label>
       <div class="audio-speed-row">
         <select id="cm-audio-speed" onchange="updateComposeAudioSpeed()">${speedOptions()}</select>
@@ -713,6 +827,7 @@ function cfgHtml(key){
         <div class="subprev" id="sub-prev">
           <div class="sub-prev-orig" id="sub-prev-orig">its manifestation will be.</div>
           <div class="sub-prev-cover" id="sub-prev-cover"></div>
+          <div class="image-main-title" id="cm-image-title-preview"></div>
           <div id="sub-prev-text">这是一句中文字幕示例</div></div>
       </div>
       <div style="margin-top:6px">
@@ -763,8 +878,72 @@ function wireDownload(){
   drop.addEventListener("drop",ev=>{if(ev.dataTransfer.files[0]){dlFile=ev.dataTransfer.files[0];document.getElementById("fn").textContent=dlFile.name;}});
 }
 function wireCompose(){
+  const mode=document.getElementById("cm-mode"),file=document.getElementById("cm-image-file");
+  if(mode)mode.onchange=updateComposeMode;
+  if(file)file.onchange=()=>{
+    const selected=file.files&&file.files[0];
+    if(!selected)return;
+    composeImageFile=selected;
+    if(composeImageUrl)URL.revokeObjectURL(composeImageUrl);
+    composeImageUrl=URL.createObjectURL(selected);
+    const name=document.getElementById("cm-image-name");
+    const p=currentProfile(),w=p.canvas_width||1920,h=p.canvas_height||1080;
+    if(name)name.textContent=`已选择：${selected.name}（将裁切填充到 ${w}×${h}）`;
+    updateComposeMode();
+  };
+  ["cm-image-title-enabled","cm-image-title","cm-image-title-font","cm-image-title-width",
+   "cm-image-title-x","cm-image-title-y"].forEach(id=>{
+    const el=document.getElementById(id);
+    if(el)el.addEventListener(id==="cm-image-title-enabled"?"change":"input",updateImageTitlePreview);
+  });
   applySubPresetDefaults();
+  updateComposeMode();
   updateComposeAudioPreview(true);
+}
+function updateComposeMode(){
+  const mode=document.getElementById("cm-mode");
+  const imageMode=!!mode&&mode.value==="image";
+  const imageBox=document.getElementById("cm-image-box");
+  if(imageBox)imageBox.classList.toggle("hide",!imageMode);
+  const originalCover=document.getElementById("cm-cover");
+  if(originalCover)originalCover.disabled=imageMode;
+  const preview=document.getElementById("sub-prev");
+  if(preview){
+    preview.style.backgroundImage=imageMode&&composeImageUrl?`url("${composeImageUrl}")`:"";
+    preview.style.backgroundSize="cover";
+    preview.style.backgroundPosition="center";
+  }
+  updateImageTitlePreview();
+}
+function updateImageTitlePreview(){
+  const box=document.getElementById("sub-prev"),title=document.getElementById("cm-image-title-preview");
+  if(!box||!title)return;
+  const p=currentProfile(),canvasW=+(p.canvas_width||1920),canvasH=+(p.canvas_height||1080);
+  box.classList.toggle("vertical",canvasH>canvasW);
+  const imageMode=document.getElementById("cm-mode")?.value==="image";
+  const enabled=!!document.getElementById("cm-image-title-enabled")?.checked;
+  const value=document.getElementById("cm-image-title")?.value.trim()||"根据中文稿自动生成";
+  const font=+(document.getElementById("cm-image-title-font")?.value||110);
+  const width=+(document.getElementById("cm-image-title-width")?.value||84);
+  const x=+(document.getElementById("cm-image-title-x")?.value||0);
+  const y=+(document.getElementById("cm-image-title-y")?.value||0);
+  title.textContent=value;
+  title.style.display=imageMode&&enabled?"block":"none";
+  title.style.left=x+"%";
+  title.style.top=y+"%";
+  title.style.width=width+"%";
+  const previewW=box.clientWidth||520;
+  title.style.fontSize=Math.max(10,font*previewW/canvasW)+"px";
+  const values={
+    "cm-image-title-font-val":font,
+    "cm-image-title-width-val":width+"%",
+    "cm-image-title-x-val":x+"%",
+    "cm-image-title-y-val":y+"%",
+  };
+  Object.entries(values).forEach(([id,textValue])=>{
+    const el=document.getElementById(id);if(el)el.textContent=String(textValue);
+  });
+  updateSubPreview();
 }
 function toggleSubPreview(){
   const wrap=document.getElementById("sub-preview-wrap"),state=document.getElementById("sub-preview-state");
@@ -850,8 +1029,9 @@ function subStyle(){
 function updateSubPreview(){
   const t=document.getElementById("sub-prev-text"),box=document.getElementById("sub-prev");if(!t)return;
   const s=subStyle();
+  const p=currentProfile(),canvasW=+(p.canvas_width||1920),canvasH=+(p.canvas_height||1080);
   const h=box&&box.clientHeight?box.clientHeight:210;
-  const px=(s.fontsize*h/1080).toFixed(1);   // 按 1080p 基准等比缩放
+  const px=(s.fontsize*h/canvasH).toFixed(1);
   const o=Math.max(1.2,px/16);
   t.style.fontFamily=`"${s.font}"`;
   t.style.fontSize=px+"px";
@@ -859,7 +1039,30 @@ function updateSubPreview(){
   t.style.fontWeight=String(s.bold)==="1"?"800":"500";
   t.style.textShadow=`${-o}px ${-o}px 0 ${s.outline},${o}px ${-o}px 0 ${s.outline},${-o}px ${o}px 0 ${s.outline},${o}px ${o}px 0 ${s.outline}`;
   if(box)box.style.alignItems={bottom:"flex-end",middle:"center",top:"flex-start"}[s.position]||"flex-end";
-  const covOn=document.getElementById("cm-cover"),on=!!(covOn&&covOn.checked);
+  const portraitImage=(document.getElementById("cm-mode")?.value==="image")&&canvasH>canvasW;
+  if(portraitImage&&s.position==="top"){
+    const margin=+(p.subtitle_marginv||430);
+    t.style.position="absolute";
+    t.style.top=(margin/canvasH*100)+"%";
+    t.style.bottom="auto";
+    t.style.left="4%";
+    t.style.width="92%";
+  }else if(portraitImage&&s.position==="bottom"){
+    const margin=+(p.subtitle_marginv||180);
+    t.style.position="absolute";
+    t.style.top="auto";
+    t.style.bottom=(margin/canvasH*100)+"%";
+    t.style.left="4%";
+    t.style.width="92%";
+  }else{
+    t.style.position="relative";
+    t.style.top="auto";
+    t.style.bottom="auto";
+    t.style.left="auto";
+    t.style.width="auto";
+  }
+  const imageMode=document.getElementById("cm-mode")?.value==="image";
+  const covOn=document.getElementById("cm-cover"),on=!!(covOn&&covOn.checked&&!imageMode);
   const covBox=document.getElementById("cm-cover-box");if(covBox)covBox.classList.toggle("hide",!on);
   const opEl=document.getElementById("cm-cover-op"),hEl=document.getElementById("cm-cover-h");
   const op=(+(opEl&&opEl.value)||90)/100,hh=(+(hEl&&hEl.value)||22);
@@ -867,6 +1070,7 @@ function updateSubPreview(){
   const hv=document.getElementById("cm-cover-h-val");if(hv)hv.textContent=hh+"%";
   const cov=document.getElementById("sub-prev-cover");
   if(cov){cov.classList.toggle("on",on);cov.style.opacity=String(op);cov.style.height=hh+"%";}
+  const orig=document.getElementById("sub-prev-orig");if(orig)orig.style.display=imageMode?"none":"";
   const fv=document.getElementById("cm-fontsize-val");if(fv)fv.textContent=String(Math.round(s.fontsize));
 }
 function updateComposeAudioSpeed(){
@@ -891,24 +1095,32 @@ function updateComposeAudioPreview(force=false){
 }
 
 // ---------- 收集配置 ----------
-function collect(step,forceTts){const g=id=>document.getElementById(id);
-  if(step==="download")return {url:(g("dl-url")||{}).value?.trim()||"",media:"video"};
-  if(step==="asr")return {model:g("asr-model").value,language:g("asr-lang").value};
-  if(step==="translate")return {engine:g("tr-engine").value,rewrite_level:g("tr-rewrite")?.value||CFG.rewrite_level_default||"high"};
-  if(step==="tts")return {engine:(g("tts-engine")||{}).value||CFG.tts_engine_default,voice:g("tts-voice").value,
+function collect(step,forceTts){const g=id=>document.getElementById(id),profile=ACTIVE_PROFILE;
+  if(step==="download")return {profile,url:(g("dl-url")||{}).value?.trim()||"",media:"video"};
+  if(step==="asr")return {profile,model:g("asr-model").value,language:g("asr-lang").value};
+  if(step==="translate")return {profile,engine:g("tr-engine").value,rewrite_level:g("tr-rewrite")?.value||CFG.rewrite_level_default||"high"};
+  if(step==="tts")return {profile,engine:(g("tts-engine")||{}).value||CFG.tts_engine_default,voice:g("tts-voice").value,
     speed:g("tts-speed").value,f5_parallel:+(g("f5-parallel")?.value||CFG.f5_parallel_default||4),force:!!forceTts};
-  if(step==="compose")return {mode:"original",audio_speed:g("cm-audio-speed")?.value||"1.00",
+  if(step==="compose"){const p=currentProfile();return {profile,mode:g("cm-mode")?.value||"original",audio_speed:g("cm-audio-speed")?.value||"1.00",
     preset:g("cm-preset").value,
     fontsize:+(g("cm-fontsize")?.value||0),position:g("cm-position")?.value||"",
+    canvas_width:+(p.canvas_width||1920),canvas_height:+(p.canvas_height||1080),
+    subtitle_marginv:+(p.subtitle_marginv||60),
+    image_title_enabled:!!g("cm-image-title-enabled")?.checked,
+    image_title:g("cm-image-title")?.value.trim()||"",
+    image_title_font_size:+(g("cm-image-title-font")?.value||110),
+    image_title_width:+(g("cm-image-title-width")?.value||84)/100,
+    image_title_x:+(g("cm-image-title-x")?.value||0)/100,
+    image_title_y:+(g("cm-image-title-y")?.value||0)/100,
     bilingual:g("cm-bi").checked,burn:g("cm-burn").checked,
     cover_original:!!g("cm-cover")?.checked,
     cover_opacity:(+(g("cm-cover-op")?.value)||90)/100,
-    cover_height:(+(g("cm-cover-h")?.value)||22)/100};
+    cover_height:(+(g("cm-cover-h")?.value)||22)/100};}
   if(step==="publish"){
     const box=g("cover-title-box"),ed=g("cover-editor");
     const x=box&&ed&&ed.clientWidth>0?(box.offsetLeft/ed.clientWidth):coverDefault("cover_title_x_default",0.47);
     const y=box&&ed&&ed.clientHeight>0?(box.offsetTop/ed.clientHeight):coverDefault("cover_title_y_default",0.10);
-    return {platform:g("pb-platform").value,mode:"archive",
+    return {profile,archive_profile:profile,platform:g("pb-platform").value,mode:"archive",
       cover_title:(g("cover-title-input")||{}).value||"",
       cover_x:x,cover_y:y,
       cover_font_size:+((g("cover-font")||{}).value||coverDefault("cover_title_font_size_default",112)),
@@ -1096,6 +1308,10 @@ async function run(step){
     if(qi&&!cfg.url)cfg.url=qi.url;
     if(srcMode==="file"){if(!dlFile){alert("请选择文件");return;}fd.append("file",dlFile);}
     else if(!cfg.url){alert("请填写链接");return;}}
+  if(step==="compose"&&cfg.mode==="image"){
+    if(!composeImageFile&&!currentProfile().image_available){alert("请选择用于合成视频的图片");return;}
+    if(composeImageFile)fd.append("file",composeImageFile);
+  }
   if(step==="publish"&&coverFile)fd.append("file",coverFile);
   fd.append("config_json",JSON.stringify(cfg));
   logOpen.add(step);syncLog(step);
@@ -1108,8 +1324,10 @@ async function runAll(){
   const qi=currentQueueItem();
   if(qi&&!cfgs.download.url)cfgs.download.url=qi.url;
   if(srcMode!=="file"&&!cfgs.download.url){alert("请先在第1步填写链接或上传文件");return;}
+  if(cfgs.compose.mode==="image"&&!composeImageFile&&!currentProfile().image_available){alert("请在第5步选择用于合成视频的图片");return;}
   const fd=new FormData();fd.append("configs_json",JSON.stringify(cfgs));
   if(srcMode==="file"&&dlFile)fd.append("file",dlFile);
+  if(cfgs.compose.mode==="image"&&composeImageFile)fd.append("compose_file",composeImageFile);
   if(coverFile)fd.append("cover_file",coverFile);
   logOpen.add("download");syncLog("download");
   const r=await fetch(`${API}/api/jobs/${JOB}/run_all`,{method:"POST",body:fd});
@@ -1221,6 +1439,7 @@ function openArchiveLibrary(){
   overlay.classList.add("open");
   overlay.setAttribute("aria-hidden","false");
   document.body.classList.add("modal-open");
+  syncProfileButtons();
   renderArchives();
   refreshArchives();
 }
@@ -1247,7 +1466,17 @@ function archiveTime(ar){
 function sortedArchives(){
   const dir=ARCHIVE_SORT==="asc"?"asc":"desc";
   const sign=dir==="asc"?1:-1;
-  return [...(ARCHIVES||[])].sort((a,b)=>sign*(archiveTime(a)-archiveTime(b)));
+  return [...(ARCHIVES||[])]
+    .filter(item=>(item.archive_profile||"jung")===ARCHIVE_PROFILE)
+    .sort((a,b)=>sign*(archiveTime(a)-archiveTime(b)));
+}
+
+function setArchiveProfile(profile){
+  if(!["jung","naval"].includes(profile))return;
+  ARCHIVE_PROFILE=profile;
+  localStorage.setItem("archiveProfile",ARCHIVE_PROFILE);
+  syncProfileButtons();
+  renderArchives();
 }
 
 function setArchiveSort(dir){
@@ -1261,6 +1490,8 @@ function renderArchives(){
   const count=document.getElementById("archive-count"),libraryCount=document.getElementById("archive-library-count");
   const overlay=document.getElementById("archive-overlay");
   const items=sortedArchives();
+  const selectedProfile=(CFG.profiles||[]).find(p=>p.key===ARCHIVE_PROFILE);
+  const profileName=(selectedProfile&&selectedProfile.name)||"荣格";
   const sortText=ARCHIVE_SORT==="asc"?"按生成时间正序":"按生成时间倒序";
   const descBtn=document.getElementById("archive-sort-desc"),ascBtn=document.getElementById("archive-sort-asc");
   if(descBtn&&ascBtn){
@@ -1270,14 +1501,14 @@ function renderArchives(){
     ascBtn.setAttribute("aria-pressed",ARCHIVE_SORT==="asc"?"true":"false");
   }
   if(count){
-    count.textContent=`${items.length} 个已上传`;
+    count.textContent=`${profileName} · ${items.length} 个已上传`;
   }
   if(libraryCount){
-    libraryCount.textContent=`${items.length} 个已上传 · ${sortText}`;
+    libraryCount.textContent=`${profileName} · ${items.length} 个已上传 · ${sortText}`;
   }
   if(!gallery||!overlay||!overlay.classList.contains("open"))return;
   if(!items.length){
-    gallery.innerHTML='<div class="archive-empty">还没有上传归档。</div>';
+    gallery.innerHTML=`<div class="archive-empty">还没有${profileName}归档。</div>`;
     return;
   }
   gallery.innerHTML=items.map((ar,idx)=>{
@@ -1294,7 +1525,7 @@ function renderArchives(){
       </div>
       <div class="archive-card-body">
         <div class="archive-name" title="${seqLabel} ${escAttr(title)}"><span class="archive-seq">${seqLabel}</span>${esc(title)}</div>
-        <div class="archive-meta"><span>${fmtDateTime(ar.created_at)}</span><span>${fmtDur(ar.duration_sec||0)}</span></div>
+        <div class="archive-meta"><span>${profileName}</span><span>${fmtDateTime(ar.created_at)}</span><span>${fmtDur(ar.duration_sec||0)}</span></div>
         <div class="archive-actions">
           <button class="qtool" onclick="openArchive('${enc}',event)">打开输出</button>
         </div>
