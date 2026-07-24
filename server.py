@@ -22,7 +22,7 @@ from fastapi import FastAPI, Form, UploadFile, File, HTTPException, Body
 from fastapi.responses import (FileResponse, HTMLResponse, JSONResponse,
                                StreamingResponse)
 
-from src import config
+from src import config, profiles
 from src.steps import STEP_DEFS, final_path, work_dir_of
 from src.utils import load_json, media_duration
 
@@ -259,7 +259,12 @@ def _is_inside(path: Path, root: Path) -> bool:
 
 
 def _cfg_for_step(job_id: str, step: str, cfg: dict) -> dict:
-    cfg = dict(cfg or {})
+    cfg = profiles.apply_step_defaults(step, cfg)
+    if step == "compose" and cfg.get("mode") == "image" and not cfg.get("file"):
+        previous = load_json(work_dir_of(job_id) / "cfg" / "compose.json") or {}
+        previous_file = previous.get("file")
+        if previous_file and Path(previous_file).is_file():
+            cfg["file"] = previous_file
     if step == "publish":
         project = _job_project_dir(job_id)
         if project:
@@ -272,7 +277,8 @@ _STEP_OUTPUTS = {
     "asr": ["segments.json"],
     "translate": ["translated.json", "translated.meta.json"],
     "tts": ["dub.wav", "dub_segments.json", "dub_speed.json", "compose_audio_speed.json"],
-    "compose": ["subs.srt", "subs.vtt", "subs.ass", "cover_title.txt", "cover.png", "final.mp4"],
+    "compose": ["subs.srt", "subs.vtt", "subs.ass", "cover_title.txt",
+                "image_title.txt", "cover.png", "compose_background.png", "final.mp4"],
     "publish": ["publish"],
 }
 _ARCHIVE_OUTPUTS = [
@@ -1131,6 +1137,7 @@ def _archive_summary(archive_dir: Path, meta: dict, job_id: str = "", item_id: s
         "created_at": _gen_ts(meta, archive_dir),
         "uploaded": bool(meta.get("uploaded")),
         "uploaded_at": meta.get("uploaded_at", ""),
+        "archive_profile": profiles.normalize_profile(meta.get("archive_profile")),
         "has_video": bool(video),
         "has_cover": (archive_dir / "cover.png").exists(),
         "duration_sec": media_duration(video) if video else 0,
@@ -1297,6 +1304,8 @@ def get_config():
         "voice_default": config.TTS_VOICE,
         "speed_default": config.TTS_SPEED,
         "f5_parallel_default": config.F5_TTS_PARALLEL,
+        "profile_default": profiles.DEFAULT_PROFILE,
+        "profiles": profiles.public_profiles(),
         "rewrite_level_default": "high",
         "whisper_models": ["small", "large-v3-turbo"],
         "engines": [{"key": "deepseek", "name": "DeepSeek（大模型，质量高）"},
@@ -1319,6 +1328,16 @@ def get_config():
         "has_deepseek": bool(config.DEEPSEEK_API_KEY),
         "bilibili_logged_in": Path(config.BILIBILI_COOKIE_FILE).exists(),
     }
+
+
+@app.get("/api/profiles/{profile_key}/image.png")
+def get_profile_image(profile_key: str):
+    if profile_key not in {item["key"] for item in profiles.public_profiles()}:
+        raise HTTPException(404, "未知创作档案")
+    image = profiles.image_path(profile_key)
+    if not image.is_file():
+        raise HTTPException(404, "档案默认图片不存在")
+    return _serve(image, "image/png")
 
 
 def _num_or_none(value: str) -> float | None:
@@ -1741,7 +1760,12 @@ async def run_step(job_id: str, step: str = Form(...), config_json: str = Form("
     except json.JSONDecodeError:
         cfg = {}
     if file is not None and file.filename:
-        cfg["file"] = _save_upload(job_id, file)
+        upload_slot = {
+            "download": job_id,
+            "compose": job_id + ".compose",
+            "publish": job_id + ".cover",
+        }.get(step, job_id + f".{step}")
+        cfg["file"] = _save_upload(upload_slot, file)
     threading.Thread(target=_single_thread, args=(job_id, step, cfg), daemon=True).start()
     return {"ok": True}
 
@@ -1749,6 +1773,7 @@ async def run_step(job_id: str, step: str = Form(...), config_json: str = Form("
 @app.post("/api/jobs/{job_id}/run_all")
 async def run_all(job_id: str, configs_json: str = Form("{}"),
                   file: UploadFile | None = File(default=None),
+                  compose_file: UploadFile | None = File(default=None),
                   cover_file: UploadFile | None = File(default=None)):
     if _job(job_id)["running"]:
         raise HTTPException(409, "已有步骤正在点灯")
@@ -1758,6 +1783,10 @@ async def run_all(job_id: str, configs_json: str = Form("{}"),
         configs = {}
     if file is not None and file.filename:
         configs.setdefault("download", {})["file"] = _save_upload(job_id, file)
+    if compose_file is not None and compose_file.filename:
+        configs.setdefault("compose", {})["file"] = _save_upload(
+            job_id + ".compose", compose_file
+        )
     if cover_file is not None and cover_file.filename:
         configs.setdefault("publish", {})["file"] = _save_upload(job_id + ".cover", cover_file)
     threading.Thread(target=_all_thread, args=(job_id, configs), daemon=True).start()

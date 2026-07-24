@@ -201,10 +201,11 @@ def _nvenc_available() -> bool:
         return False
 
 
-def image_to_video(image: Path, audio: Path, ass: Path | None, out_path: Path) -> Path:
+def image_to_video(image: Path, audio: Path, ass: Path | None, out_path: Path, *,
+                   width: int = 1920, height: int = 1080) -> Path:
     """静态图片 + 配音 → 视频，时长跟随音频；可烧录字幕。"""
-    vf = "scale=1920:1080:force_original_aspect_ratio=decrease,"\
-         "pad=1920:1080:(ow-iw)/2:(oh-ih)/2,format=yuv420p"
+    vf = f"scale={width}:{height}:force_original_aspect_ratio=decrease,"\
+         f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,format=yuv420p"
     if ass:
         vf += f",subtitles='{_escape_subs(ass)}'"
 
@@ -235,6 +236,9 @@ def image_to_video(image: Path, audio: Path, ass: Path | None, out_path: Path) -
 def compose(*, mode: str, work_dir: Path, audio: Path, ass: Path | None,
             out_path: Path, title: str = "", bg: str = "#10131a",
             bg2: str | None = "#1d2740", image: Path | None = None,
+            title_x: float = 0.07, title_y: float = 0.10,
+            title_font_size: int = 132, title_width: float = 0.62,
+            canvas_width: int = 1920, canvas_height: int = 1080,
             cover: dict | None = None) -> Path:
     """统一入口。mode: original | image。封面生成由第 6 步归档负责。
 
@@ -243,6 +247,21 @@ def compose(*, mode: str, work_dir: Path, audio: Path, ass: Path | None,
     cover_png = work_dir / "cover.png"
     if mode == "image":
         cover_img = image or make_cover(title, cover_png, bg=bg, bg2=bg2)
-        return image_to_video(cover_img, audio, ass, out_path)
+        if image is not None and title.strip():
+            from . import publish
+            cover_img = publish.make_cover_from_image(
+                image,
+                work_dir / "compose_background.png",
+                title,
+                x=title_x,
+                y=title_y,
+                font_size=title_font_size,
+                box_width=title_width,
+                target_size=(canvas_width, canvas_height),
+            )
+        return image_to_video(
+            cover_img, audio, ass, out_path,
+            width=canvas_width, height=canvas_height,
+        )
     # original：复用 mux（原视频 + 配音 + 烧字幕，-shortest 截断）
     return mux.mux(work_dir / "source.mp4", audio, ass, out_path, cover=cover)
