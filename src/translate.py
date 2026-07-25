@@ -17,12 +17,12 @@ import requests
 from . import config
 from .utils import load_json, log, save_json
 
-_CACHE_VERSION = "whole-article-v8-naval-name"
+_CACHE_VERSION = "whole-article-v9-enumeration-punctuation"
 _ARTICLE_CACHE_NAME = "translation.article.json"
 _BRIDGE_CACHE_VERSION = "zh-en-semantic-bridge-v1"
 _BRIDGE_CACHE_NAME = "translation.bridge.json"
 _SENTENCE_ENDINGS = "。！？!?."
-_SOFT_SPLIT_PUNCT = "，,；;：:"
+_SOFT_SPLIT_PUNCT = "，,、；;：:"
 _CLOSING_QUOTES = "”’\"」』）》】"
 _CJK_RE = re.compile(r"[\u3400-\u9fff]")
 _LONG_ENGLISH_PHRASE_RE = re.compile(

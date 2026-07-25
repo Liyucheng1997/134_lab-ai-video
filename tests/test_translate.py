@@ -201,6 +201,21 @@ class WholeArticleTranslationTests(unittest.TestCase):
             "以及如何获得真正的幸福。",
         ])
 
+    def test_portrait_segments_break_after_an_enumeration_comma_instead_of_mid_phrase(self):
+        article = (
+            "我想把幸福从一个抽象的概念变成一个可执行、"
+            "可调试、可持续优化的工程问题。"
+        )
+
+        sentences = translate._split_zh_article(article, max_chars=30)
+
+        self.assertEqual("".join(sentences), article)
+        self.assertTrue(all(len(sentence) <= 30 for sentence in sentences))
+        self.assertEqual(sentences, [
+            "我想把幸福从一个抽象的概念变成一个可执行、",
+            "可调试、可持续优化的工程问题。",
+        ])
+
     def test_deep_rewrite_rejects_verbatim_paragraph_reordering(self):
         source = (
             "财富并不是银行卡上的数字，而是你睡觉时仍能创造价值的资产。"
