@@ -379,6 +379,7 @@
         <div class="qactions">
           <button class="btn ghost" onclick="addQueueLinks()">加入星星队列</button>
           <button class="btn" id="runqueue" onclick="runQueue()">按顺序点亮</button>
+          <button class="btn ghost" id="rerunqueue" onclick="rerunQueue()">按顺序重新点亮</button>
           <button class="btn ghost" id="pausequeue" onclick="pauseQueue()">暂停</button>
           <button class="btn danger" id="stopqueue" onclick="stopQueue()">停止</button>
           <button class="btn ghost" id="resumequeue" onclick="resumeQueue()">继续</button>
@@ -493,7 +494,7 @@ function applyCreationProfile(key,persist=true){
   if(persist)localStorage.setItem("creationProfile",ACTIVE_PROFILE);
   const desc=document.getElementById("profile-description");if(desc)desc.textContent=selected.description||"";
   const asr=document.getElementById("asr-lang");if(asr)asr.value=selected.asr_language||"";
-  const trEngine=document.getElementById("tr-engine");if(trEngine)trEngine.value=selected.translate_engine||"deepseek";
+  const trEngine=document.getElementById("tr-engine");if(trEngine)trEngine.value=selected.translate_engine||"claude_code";
   const rewrite=document.getElementById("tr-rewrite");if(rewrite)rewrite.value=selected.rewrite_level||"high";
   const ttsEngine=document.getElementById("tts-engine");if(ttsEngine)ttsEngine.value=selected.tts_engine||"f5";
   renderVoiceOptions(selected.tts_engine,selected.tts_voice);
@@ -765,7 +766,8 @@ function cfgHtml(key){
         <select id="tr-rewrite">${(CFG.rewrite_levels||[]).map(e=>`<option value="${e.key}" ${e.key===(CFG.rewrite_level_default||"high")?"selected":""}>${e.name}</option>`).join("")}</select></div>
       </div>
       <div class="hint">自动识别源语言：外语会整体中译；中文会先生成英文语义稿，再仅依据英文稿创作全新中文口播稿，从源头避开中文原句措辞。两种模式都会清除广告并修复转写断句。纳瓦尔竖屏配置会强制把人物名 Naval 译写为“纳瓦尔”，全文完成后按 30 字上限分句，第五步再按每行 15 字显示为最多两行；原创度不合格时只重做英文到中文这一步。</div>
-      ${CFG.has_deepseek?"":'<div class="hint">⚠ 未配置 DEEPSEEK_API_KEY，请用 Google 或在 .env 填 key。</div>'}`;
+      ${CFG.has_deepseek?"":'<div class="hint">⚠ 未配置 DEEPSEEK_API_KEY，选 DeepSeek 会失败；可改用 Claude Code 或 Google，或在 .env 填 key。</div>'}
+      ${CFG.has_claude_code?"":'<div class="hint">⚠ 本机未检测到 Claude Code CLI，选 Claude Code 会失败；请先安装并登录 Claude Code，或改用其他引擎。</div>'}`;
   if(key==="tts")return `
       <label>配音引擎</label>
       <select id="tts-engine" style="max-width:420px" onchange="onTtsEngineChange()">${engineOptions()}</select>
@@ -1151,6 +1153,18 @@ async function runQueue(){
   if(!r.ok)alert((await r.json().catch(()=>({}))).detail||"启动星星队列失败");
 }
 
+async function rerunQueue(){
+  const ok=await confirmCard({
+    title:"按顺序重新点亮？",
+    body:"将清除队列里每颗星星第 3 步（翻译）及之后的成果，保留已下载的视频和语音转写，然后按当前配置从翻译开始重新点亮整个队列。已归档的成片会在原文件夹里重新生成。",
+    okText:"重新点亮",
+  });
+  if(!ok)return;
+  const cfgs=collectAll();
+  const r=await fetch(`${API}/api/queue/rerun`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({step:"translate",configs:cfgs})});
+  if(!r.ok)alert((await r.json().catch(()=>({}))).detail||"重新点亮失败");
+}
+
 async function stopQueue(){
   const r=await fetch(`${API}/api/queue/stop`,{method:"POST"});
   if(!r.ok)alert((await r.json().catch(()=>({}))).detail||"停止失败");
@@ -1392,6 +1406,8 @@ function renderQueue(){
   const active=!!QST.running||items.some(x=>x.status==="running")||!!(ST&&ST.running);
   sum.textContent=`${items.length} 颗星 · ${done} 已点亮 · ${pending} 待点灯${QST.paused?" · 已暂停":""}`;
   document.getElementById("runqueue").disabled=active||!canContinue;
+  const rerunBtn=document.getElementById("rerunqueue");
+  if(rerunBtn)rerunBtn.disabled=active||!items.length;
   document.getElementById("pausequeue").disabled=!active||!!QST.paused;
   document.getElementById("stopqueue").disabled=!active;
   document.getElementById("resumequeue").disabled=active||!canContinue;

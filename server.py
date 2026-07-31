@@ -1177,13 +1177,22 @@ def _run_queue_thread(configs: dict):
             _QUEUE_RUNNING = True
             _QUEUE_STOP = False
         try:
+            # 每次启动队列，每颗星星只尝试一次；失败的跳过留给下一颗，
+            # 避免第一项反复失败时队列在原地无限重试。
+            attempted: set[str] = set()
             while True:
                 with _LOCK:
                     if _QUEUE_STOP or _QUEUE_PAUSED:
                         break
-                    item = next((x for x in _QUEUE if x.get("status") in {"pending", "error"}), None)
+                    item = next(
+                        (x for x in _QUEUE
+                         if x.get("status") in {"pending", "error"}
+                         and x.get("id") not in attempted),
+                        None,
+                    )
                     if not item:
                         break
+                    attempted.add(item.get("id"))
                     item["status"] = "running"
                     item["started_at"] = item.get("started_at") or time.time()
                     item["ended_at"] = None
@@ -1208,6 +1217,11 @@ def _run_queue_thread(configs: dict):
                         cfg = dict(configs.get(key, {}))
                         if key == "download":
                             cfg["url"] = item["url"]
+                        # 重做已归档的星星时，成片仍写回它原来的归档文件夹。
+                        if (key == "publish" and item.get("project_dir")
+                                and not cfg.get("archive_dir")
+                                and Path(item["project_dir"]).exists()):
+                            cfg["archive_dir"] = item["project_dir"]
                         code = _run_one(job_id, key, cfg)
                         with _LOCK:
                             if _QUEUE_STOP:
@@ -1309,6 +1323,7 @@ def get_config():
         "rewrite_level_default": "high",
         "whisper_models": ["small", "large-v3-turbo"],
         "engines": [{"key": "deepseek", "name": "DeepSeek（大模型，质量高）"},
+                    {"key": "claude_code", "name": "Claude Code（本地订阅额度）"},
                     {"key": "google", "name": "Google 翻译（免费，快）"}],
         "rewrite_levels": [
             {"key": "low", "name": "低级洗稿（轻度润色）"},
@@ -1326,6 +1341,10 @@ def get_config():
         "cover_title_font_size_default": config.DEFAULT_COVER_TITLE_FONT_SIZE,
         "default_cover_available": config.DEFAULT_COVER_IMAGE.exists(),
         "has_deepseek": bool(config.DEEPSEEK_API_KEY),
+        "has_claude_code": bool(
+            shutil.which(config.CLAUDE_CODE_CLI)
+            or Path(config.CLAUDE_CODE_CLI).is_file()
+        ),
         "bilibili_logged_in": Path(config.BILIBILI_COOKIE_FILE).exists(),
     }
 
@@ -1586,6 +1605,63 @@ def run_queue(payload: dict = Body(default={})):
     configs = payload.get("configs") or {}
     threading.Thread(target=_run_queue_thread, args=(configs,), daemon=True).start()
     return {"ok": True}
+
+
+@app.post("/api/queue/rerun")
+def rerun_queue(payload: dict = Body(default={})):
+    """整条队列从指定步骤（默认第 3 步翻译）起重做：清除该步及之后的产物后按顺序点亮。"""
+    global _QUEUE_RUNNING, _QUEUE_PAUSED, _QUEUE_STOP
+    step = str(payload.get("step") or "translate")
+    if step not in _STEP_KEYS:
+        raise HTTPException(400, "未知步骤")
+    configs = payload.get("configs") or {}
+    if not isinstance(configs, dict):
+        configs = {}
+    prev_steps = _STEP_KEYS[:_STEP_KEYS.index(step)]
+    with _LOCK:
+        if _QUEUE_RUNNING:
+            raise HTTPException(409, "星星队列正在点灯，请先暂停或停止")
+        if any((_JOBS.get(x["job_id"]) or {}).get("running") for x in _QUEUE):
+            raise HTTPException(409, "已有步骤正在点灯，请稍后再试")
+        items = [dict(x) for x in _QUEUE]
+    if not items:
+        raise HTTPException(400, "星星队列是空的")
+    targets: list[dict] = []
+    skipped = 0
+    for item in items:
+        wd = _work_path(item["job_id"])
+        prev_ready = all(
+            (wd / next(s["artifact"] for s in STEP_DEFS if s["key"] == k)).exists()
+            for k in prev_steps
+        )
+        # 既没有前置产物也没有链接的星星（如只剩归档记录）无法重做，保持原状。
+        if not prev_ready and not item.get("url"):
+            skipped += 1
+            continue
+        try:
+            _clear_from_step(item["job_id"], step)
+        except (RuntimeError, HTTPException):
+            skipped += 1
+            continue
+        targets.append(item)
+    if not targets:
+        raise HTTPException(400, "队列里没有可重做的星星")
+    target_ids = {item["id"] for item in targets}
+    with _LOCK:
+        if _QUEUE_RUNNING:
+            raise HTTPException(409, "星星队列正在点灯")
+        for item in _QUEUE:
+            if item["id"] in target_ids:
+                item["status"] = "pending"
+                item["error"] = None
+                item["started_at"] = None
+                item["ended_at"] = None
+        _save_queue_state_unlocked()
+        _QUEUE_RUNNING = True
+        _QUEUE_PAUSED = False
+        _QUEUE_STOP = False
+    threading.Thread(target=_run_queue_thread, args=(configs,), daemon=True).start()
+    return {"ok": True, "count": len(targets), "skipped": skipped}
 
 
 @app.post("/api/queue/pause")

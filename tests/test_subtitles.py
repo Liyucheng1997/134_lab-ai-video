@@ -2,7 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from src import subtitles
+from src import profiles, subtitles
 
 
 class VerticalSubtitleTests(unittest.TestCase):
@@ -119,6 +119,41 @@ class VerticalSubtitleTests(unittest.TestCase):
         )
         lines = dialogue.split(",,", 1)[1].split("\\N")
         self.assertEqual([len(line) for line in lines], [15, 15])
+        self.assertEqual("".join(lines), text)
+
+    def test_jung_default_wrap_keeps_a_long_horizontal_cue_to_two_lines(self):
+        text = (
+            "这个时刻很少以爆发的方式出现，"
+            "它通常以疲劳的形式到来，"
+            "一种睡眠无法修复的疲倦，"
+        )
+        cfg = profiles.apply_step_defaults("compose", {"profile": "jung"})
+        with tempfile.TemporaryDirectory() as tmp:
+            path = subtitles.write_ass(
+                [{"start": 0.0, "end": 1.0, "zh": text}],
+                Path(tmp),
+                style={
+                    "position": cfg["position"],
+                    "fontsize": cfg["fontsize"],
+                    "play_res_x": cfg["canvas_width"],
+                    "play_res_y": cfg["canvas_height"],
+                    "marginv": cfg["subtitle_marginv"],
+                    "wrap_mode": cfg["subtitle_wrap_mode"],
+                    "max_chars_per_line": cfg["subtitle_max_chars_per_line"],
+                },
+            )
+            content = path.read_text(encoding="utf-8")
+
+        dialogue = next(
+            line for line in content.splitlines() if line.startswith("Dialogue:")
+        )
+        lines = dialogue.split(",,", 1)[1].split("\\N")
+        self.assertEqual(len(lines), 2)
+        self.assertEqual(lines, [
+            "这个时刻很少以爆发的方式出现，",
+            "它通常以疲劳的形式到来，一种睡眠无法修复的疲倦，",
+        ])
+        self.assertTrue(all(len(line) <= 24 for line in lines))
         self.assertEqual("".join(lines), text)
 
 

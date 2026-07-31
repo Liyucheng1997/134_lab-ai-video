@@ -14,12 +14,20 @@ from pathlib import Path
 
 import requests
 
-from . import config
+from . import claude_code, config
 from .utils import load_json, log, save_json
 
-_CACHE_VERSION = "whole-article-v9-enumeration-punctuation"
+SUPPORTED_ENGINES = frozenset({"deepseek", "claude_code", "google"})
+AI_ENGINES = frozenset({"deepseek", "claude_code"})
+
+_CACHE_VERSION = "whole-article-v10-ai-provider"
+_JUNG_PROMPT_VERSION = "jung-two-pass-native-v2"
+# Claude Code 走订阅额度、单次调用较慢：深度顺稿提示词已内含内部母语复审，
+# 因此只调一遍，省掉第二遍整篇调用。
+_JUNG_SINGLE_PASS_PROMPT_VERSION = "jung-single-pass-v1"
+_SINGLE_PASS_ENGINES = frozenset({"claude_code"})
 _ARTICLE_CACHE_NAME = "translation.article.json"
-_BRIDGE_CACHE_VERSION = "zh-en-semantic-bridge-v1"
+_BRIDGE_CACHE_VERSION = "zh-en-semantic-bridge-v2-provider"
 _BRIDGE_CACHE_NAME = "translation.bridge.json"
 _SENTENCE_ENDINGS = "。！？!?."
 _SOFT_SPLIT_PUNCT = "，,、；;：:"
@@ -37,6 +45,77 @@ _NAVAL_NAME_RE = re.compile(
 _NAVAL_NAME_INSTRUCTION = (
     "术语硬规则：人物姓名 Naval 或 Naval Ravikant 一律译写为“纳瓦尔”，"
     "最终中文稿不得保留该人物的英文姓名。"
+)
+
+_ARTICLE_ZH_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "article_zh": {"type": "string"},
+        "ad_removed": {"type": "boolean"},
+        "ad_notes": {"type": "string"},
+    },
+    "required": ["article_zh", "ad_removed", "ad_notes"],
+    "additionalProperties": False,
+}
+_ARTICLE_EN_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "article_en": {"type": "string"},
+        "ad_removed": {"type": "boolean"},
+        "ad_notes": {"type": "string"},
+    },
+    "required": ["article_en", "ad_removed", "ad_notes"],
+    "additionalProperties": False,
+}
+_ARTICLE_ZH_ONLY_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "article_zh": {"type": "string"},
+    },
+    "required": ["article_zh"],
+    "additionalProperties": False,
+}
+_JUNG_DEEP_POLISH_INSTRUCTION = (
+    "荣格档案深度顺稿：先在内部提炼整篇英文的语义提纲，分清核心观点、关键事实、"
+    "人物、数字、案例、因果关系、转折以及影响结论的限定条件，再脱离英文句序重组中文。"
+    "保留的是这些信息和论证关系，不是英文原句的顺序、句界、修辞或词语，不要求与英文逐句对应。"
+    "连续出现的同义反复、口头填充、反问和排比，如果没有增加新信息，必须合并或删减，"
+    "只保留真正承担论证作用的强调。避免相邻句反复以你知道、你说、因为、如果你、"
+    "这个时刻、这就是等相同结构开头，也不要在一句话里重复相同的代词、连接词或近义词。"
+    "英文里的装饰性隐喻不能逐字搬进中文。先判断它实际说明的行为、感受或关系，"
+    "再改成中国人会自然说出口的话，避免以某种方式出现、以某种形式到来、"
+    "在某个层面、把某事翻译成某种语言等机械直译结构。"
+    "心理学术语优先使用通行中文译名，没有固定译名时用直白中文解释，"
+    "不要生造抽象名词，也不要为了显得深刻堆砌空泛概念。"
+    "遇到多重从句、插入语、长定语或抽象名词堆叠时，先找出人物、动作、原因、"
+    "转折和结果，再按逻辑拆成两到四个简单中文短句。一个句子只表达一个重点，"
+    "多用主动句和自然口语，不能保留英文翻译腔。"
+    "这不是摘要。不能遗漏核心观点、关键事实、人物、数字、案例、因果关系和结论，"
+    "也不能新增观点、编造内容、夸大原意或改变说话人归属。"
+    "不要使用任何引号给概念或术语加框。不要使用破折号、冒号、分号、省略号或括号补充说明，"
+    "标点尽量只用逗号、句号、问号和感叹号。每句通常控制在十二到三十个中文字，"
+    "确有必要时可以稍长，但必须完整、自然、适合单独朗读。"
+    "完成初稿后，在内部进行第二遍母语复审，逐句删除译腔、重复词、病句、错指代和生硬搭配，"
+    "并朗读检查节奏。只输出完成母语复审后的最终稿，不要展示提纲、初稿或修改过程。"
+)
+_JUNG_NATIVE_EDIT_SYS_PROMPT = (
+    "你是中文母语总编。用户提供的是英文内容转换出的完整中文初稿。"
+    "你只看中文初稿，进行第二遍深度顺稿，不需要也不能复原英文句子。"
+    "完整保留核心观点、关键事实、人物、数字、案例、因果关系、转折、"
+    "说话人归属和结论，但必须重写生硬直译、病句、错指代、重复词，"
+    "并合并没有增加新信息的同义反复、口头填充、反问和排比。"
+    "不要逐句修补，要按中文逻辑重新组织句子和段落。"
+    "英语隐喻要改写成它真正表达的行为、感受或关系，禁止保留"
+    "以某种方式出现、以某种形式到来、在某个层面、"
+    "把某事翻译成某种语言等直译结构。"
+    "例如，把很少以爆发的方式到来改成通常不是突然爆发，"
+    "把将别人的粗心翻译成还能爱他们的语言改成替别人的冷漠找理由。"
+    "心理学术语使用通行中文译名，不生造概念，不堆砌抽象词。"
+    "最终稿必须像中国人自然口述，简洁但不是摘要，不得新增观点或夸大原意。"
+    "不要使用引号、破折号、冒号、分号、省略号或括号。"
+    "完成后逐句朗读检查，删除译腔、重复词和生硬搭配。"
+    "只输出 JSON 对象："
+    "{\"article_zh\":\"母语化完整终稿\"}，不要输出解释或修改过程。"
 )
 
 _REWRITE_LEVELS = {
@@ -114,6 +193,9 @@ _ARTICLE_SYS_PROMPT = (
     "同时删除与正文无关的广告和引流，包括赞助口播、购买或下载引导、课程或书籍推销、"
     "网址导流、关注订阅号召、片头片尾频道推广；如果品牌或产品本身是正文讨论对象则保留。"
     "删除广告后要自然衔接前后文，不要在中文稿里提到‘已删除广告’。"
+    "成稿必须是纯文本口播稿，禁止出现任何 Markdown 或排版符号，"
+    "例如星号、井号、反引号、下划线强调、连字符分隔线和列表符号，"
+    "这些符号会被配音模型直接朗读出来；需要强调或分段时用语言和换行表达。"
     "完成后自行检查一遍：语句是否通顺、上下文是否连贯、是否还有未翻译英文、"
     "是否误删正文或遗留广告。"
     "只输出 JSON 对象："
@@ -143,6 +225,9 @@ _ENGLISH_BRIDGE_TO_CHINESE_SYS_PROMPT = (
     "这不是逐句回译。必须重新选择开场、主谓结构、句子边界、段落衔接和收束方式，"
     "允许重排不影响因果关系的信息，但不能漏掉关键事实、改变说话人归属、添加观点或夸张原意。"
     "不要输出英文、原文对照、解释过程或事实清单。不要补写赞助、购买、关注订阅等引流内容。"
+    "成稿必须是纯文本口播稿，禁止出现任何 Markdown 或排版符号，"
+    "例如星号、井号、反引号、下划线强调、连字符分隔线和列表符号，"
+    "这些符号会被配音模型直接朗读出来。"
     "只输出 JSON 对象："
     "{\"article_zh\":\"完整中文口播稿\",\"ad_removed\":true/false,"
     "\"ad_notes\":\"简短说明，没有则留空\"}。"
@@ -226,7 +311,104 @@ def _max_output_tokens(article: str) -> int:
     return max(1024, min(configured, estimated))
 
 
-def _call_deepseek_english_bridge(source_article: str) -> dict:
+def _normalize_engine(engine: str | None) -> str:
+    normalized = str(engine or "deepseek").strip().lower()
+    if normalized not in SUPPORTED_ENGINES:
+        supported = "、".join(sorted(SUPPORTED_ENGINES))
+        raise ValueError(f"未知翻译引擎：{normalized or '(空)'}；可选：{supported}")
+    return normalized
+
+
+def _engine_display_name(engine: str) -> str:
+    return {
+        "deepseek": "DeepSeek",
+        "claude_code": "Claude Code（本地额度）",
+        "google": "Google 翻译",
+    }[_normalize_engine(engine)]
+
+
+def _engine_model(engine: str) -> str:
+    engine = _normalize_engine(engine)
+    if engine == "deepseek":
+        return config.DEEPSEEK_MODEL
+    if engine == "claude_code":
+        return config.CLAUDE_CODE_MODEL
+    return "googletrans"
+
+
+def _call_translation_model(
+    *,
+    engine: str,
+    system_prompt: str,
+    user_payload: dict,
+    json_schema: dict,
+    temperature: float,
+    max_tokens: int,
+    operation: str,
+) -> dict:
+    """调用选定 AI 后端，统一返回结构化对象。"""
+    engine = _normalize_engine(engine)
+    if engine == "claude_code":
+        try:
+            return claude_code.call_structured_json(
+                system_prompt,
+                user_payload,
+                json_schema,
+                cli_path=config.CLAUDE_CODE_CLI,
+                model=config.CLAUDE_CODE_MODEL,
+                effort=config.CLAUDE_CODE_EFFORT,
+                timeout=config.CLAUDE_CODE_TIMEOUT,
+            )
+        except claude_code.ClaudeCodeError as exc:
+            raise RuntimeError(f"Claude Code {operation}失败：{exc}") from exc
+    if engine != "deepseek":
+        raise ValueError(f"{_engine_display_name(engine)} 不支持 AI 全文洗稿")
+    if not config.DEEPSEEK_API_KEY:
+        raise RuntimeError(
+            "缺少 DEEPSEEK_API_KEY，请在 .env 中配置、选择 Claude Code，"
+            "或改用 Google。"
+        )
+    response = requests.post(
+        f"{config.DEEPSEEK_BASE_URL}/chat/completions",
+        headers={
+            "Authorization": f"Bearer {config.DEEPSEEK_API_KEY}",
+            "Content-Type": "application/json",
+        },
+        json={
+            "model": config.DEEPSEEK_MODEL,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {
+                    "role": "user",
+                    "content": json.dumps(user_payload, ensure_ascii=False),
+                },
+            ],
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+            "response_format": {"type": "json_object"},
+            "stream": False,
+        },
+        timeout=300,
+    )
+    response.raise_for_status()
+    body = response.json()
+    choice = body["choices"][0]
+    if choice.get("finish_reason") == "length":
+        raise RuntimeError(
+            f"DeepSeek {operation}达到输出上限，请提高 "
+            "DEEPSEEK_MAX_OUTPUT_TOKENS 或缩短原视频"
+        )
+    data = _parse_json_object(choice["message"]["content"])
+    if not isinstance(data, dict):
+        raise ValueError(f"DeepSeek {operation}未返回 JSON 对象")
+    return data
+
+
+def _call_deepseek_english_bridge(
+    source_article: str,
+    *,
+    engine: str = "deepseek",
+) -> dict:
     payload = {
         "task": "translate_chinese_article_to_english_semantic_bridge",
         "source_language": "zh",
@@ -239,37 +421,15 @@ def _call_deepseek_english_bridge(source_article: str) -> dict:
             "write_natural_english_not_word_for_word_gloss",
         ],
     }
-    response = requests.post(
-        f"{config.DEEPSEEK_BASE_URL}/chat/completions",
-        headers={
-            "Authorization": f"Bearer {config.DEEPSEEK_API_KEY}",
-            "Content-Type": "application/json",
-        },
-        json={
-            "model": config.DEEPSEEK_MODEL,
-            "messages": [
-                {
-                    "role": "system",
-                    "content": _CHINESE_TO_ENGLISH_BRIDGE_SYS_PROMPT,
-                },
-                {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
-            ],
-            "temperature": 0.25,
-            "max_tokens": _max_output_tokens(source_article),
-            "response_format": {"type": "json_object"},
-            "stream": False,
-        },
-        timeout=300,
+    return _call_translation_model(
+        engine=engine,
+        system_prompt=_CHINESE_TO_ENGLISH_BRIDGE_SYS_PROMPT,
+        user_payload=payload,
+        json_schema=_ARTICLE_EN_SCHEMA,
+        temperature=0.25,
+        max_tokens=_max_output_tokens(source_article),
+        operation="英文语义中间稿",
     )
-    response.raise_for_status()
-    body = response.json()
-    choice = body["choices"][0]
-    if choice.get("finish_reason") == "length":
-        raise RuntimeError(
-            "DeepSeek 英文中间稿达到输出上限，请提高 "
-            "DEEPSEEK_MAX_OUTPUT_TOKENS 或缩短原视频"
-        )
-    return _parse_json_object(choice["message"]["content"])
 
 
 def _extract_english_bridge(
@@ -303,6 +463,7 @@ def _extract_english_bridge(
 def _call_deepseek_chinese_from_english(
     english_bridge: str,
     *,
+    engine: str = "deepseek",
     rewrite_level: str,
     source_effective_length: int,
     retry_note: str = "",
@@ -340,48 +501,26 @@ def _call_deepseek_chinese_from_english(
             "不要尝试复原中文原句。必须更换开场、信息焦点、主谓结构和段落组织，"
             "同时完整保留英文稿中的事实和观点归属。"
         )
-    response = requests.post(
-        f"{config.DEEPSEEK_BASE_URL}/chat/completions",
-        headers={
-            "Authorization": f"Bearer {config.DEEPSEEK_API_KEY}",
-            "Content-Type": "application/json",
-        },
-        json={
-            "model": config.DEEPSEEK_MODEL,
-            "messages": [
-                {
-                    "role": "system",
-                    "content": (
-                        _ENGLISH_BRIDGE_TO_CHINESE_SYS_PROMPT
-                        + _rewrite_instruction(rewrite_level, True)
-                        + "请先完成整篇文章的宏观重构，竖屏字幕长度会在生成后由程序统一切分。"
-                        + (_NAVAL_NAME_INSTRUCTION if force_naval_name else "")
-                        + retry_instruction
-                    ),
-                },
-                {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
-            ],
-            "temperature": (
-                1.05 if retry_attempt >= 2
-                else 0.95 if retry_note
-                else 0.85 if rewrite_level == "high"
-                else 0.50
-            ),
-            "max_tokens": _max_output_tokens(english_bridge),
-            "response_format": {"type": "json_object"},
-            "stream": False,
-        },
-        timeout=300,
+    return _call_translation_model(
+        engine=engine,
+        system_prompt=(
+            _ENGLISH_BRIDGE_TO_CHINESE_SYS_PROMPT
+            + _rewrite_instruction(rewrite_level, True)
+            + "请先完成整篇文章的宏观重构，竖屏字幕长度会在生成后由程序统一切分。"
+            + (_NAVAL_NAME_INSTRUCTION if force_naval_name else "")
+            + retry_instruction
+        ),
+        user_payload=payload,
+        json_schema=_ARTICLE_ZH_SCHEMA,
+        temperature=(
+            1.05 if retry_attempt >= 2
+            else 0.95 if retry_note
+            else 0.85 if rewrite_level == "high"
+            else 0.50
+        ),
+        max_tokens=_max_output_tokens(english_bridge),
+        operation="中文回译稿",
     )
-    response.raise_for_status()
-    body = response.json()
-    choice = body["choices"][0]
-    if choice.get("finish_reason") == "length":
-        raise RuntimeError(
-            "DeepSeek 中文回译稿达到输出上限，请提高 "
-            "DEEPSEEK_MAX_OUTPUT_TOKENS 或缩短原视频"
-        )
-    return _parse_json_object(choice["message"]["content"])
 
 
 def _translate_chinese_via_english(
@@ -389,7 +528,10 @@ def _translate_chinese_via_english(
     rewrite_level: str,
     bridge_cache_path: Path | None = None,
     force_naval_name: bool = False,
+    engine: str = "deepseek",
 ) -> tuple[str, dict]:
+    engine = _normalize_engine(engine)
+    model = _engine_model(engine)
     source_digest = _article_digest(source_article)
     source_effective_length = len(_normalize_for_comparison(source_article))
     bridge_data = load_json(bridge_cache_path) if bridge_cache_path else None
@@ -398,7 +540,8 @@ def _translate_chinese_via_english(
         isinstance(bridge_data, dict)
         and bridge_data.get("version") == _BRIDGE_CACHE_VERSION
         and bridge_data.get("source_digest") == source_digest
-        and bridge_data.get("model") == config.DEEPSEEK_MODEL
+        and bridge_data.get("engine") == engine
+        and bridge_data.get("model") == model
     ):
         try:
             english_bridge = _extract_english_bridge(
@@ -410,14 +553,18 @@ def _translate_chinese_via_english(
         except ValueError:
             bridge_data = None
     if not bridge_cache_hit:
-        bridge_response = _call_deepseek_english_bridge(source_article)
+        bridge_response = _call_deepseek_english_bridge(
+            source_article,
+            engine=engine,
+        )
         english_bridge = _extract_english_bridge(
             bridge_response,
             source_effective_length,
         )
         bridge_data = {
             "version": _BRIDGE_CACHE_VERSION,
-            "model": config.DEEPSEEK_MODEL,
+            "engine": engine,
+            "model": model,
             "source_language": "zh",
             "target_language": "en",
             "source_digest": source_digest,
@@ -444,6 +591,7 @@ def _translate_chinese_via_english(
         )
         data = _call_deepseek_chinese_from_english(
             english_bridge,
+            engine=engine,
             rewrite_level=normalized_level,
             source_effective_length=source_effective_length,
             retry_note=retry_note,
@@ -461,7 +609,7 @@ def _translate_chinese_via_english(
             source_article=source_article,
             similarity_limit=similarity_limit,
             deep_rewrite_checks=normalized_level == "high",
-            length_ratio_bounds=(0.70, 1.10),
+            length_ratio_bounds=(0.50, 1.10),
         )
         if not last_issue:
             return article, {
@@ -481,80 +629,128 @@ def _translate_chinese_via_english(
             }
         log("translate", f"英文中间稿回译质检未通过，整篇重试：{last_issue}")
     raise RuntimeError(
-        f"DeepSeek 英文中间稿回译连续三次未通过质检：{last_issue}"
+        f"{_engine_display_name(engine)} 英文中间稿回译连续三次未通过质检："
+        f"{last_issue}"
     )
 
 
 def _call_deepseek_article(source_article: str, *, rewrite_level: str,
                            retry_note: str = "",
                            max_zh_segment_chars: int = 0,
-                           force_naval_name: bool = False) -> dict:
+                           force_naval_name: bool = False,
+                           engine: str = "deepseek") -> dict:
     rewrite_level = _normalize_rewrite_level(rewrite_level)
     rewrite = _REWRITE_LEVELS[rewrite_level]
+    jung_deep_polish = rewrite_level == "high" and not force_naval_name
     payload = {
         "task": "translate_complete_article_to_clean_chinese_voiceover",
         "rewrite_level": rewrite_level,
-        "rewrite_instruction": rewrite["instruction"],
         "source_language": "en",
         "target_segment_chars": max_zh_segment_chars,
-        "rewrite_strategy": "meaning_first_translation",
+        "rewrite_strategy": (
+            "semantic_outline_reconstruction"
+            if jung_deep_polish
+            else "meaning_first_translation"
+        ),
         "source_article_en": source_article,
     }
+    if not jung_deep_polish:
+        payload["rewrite_instruction"] = rewrite["instruction"]
     if force_naval_name:
         payload["required_term_translations"] = {"Naval": "纳瓦尔"}
     if retry_note:
         payload["quality_retry"] = retry_note
+        payload["retry_mode"] = "forced_structural_rewrite"
 
-    response = requests.post(
-        f"{config.DEEPSEEK_BASE_URL}/chat/completions",
-        headers={
-            "Authorization": f"Bearer {config.DEEPSEEK_API_KEY}",
-            "Content-Type": "application/json",
-        },
-        json={
-            "model": config.DEEPSEEK_MODEL,
-            "messages": [
-                {
-                    "role": "system",
-                    "content": (
-                        _ARTICLE_SYS_PROMPT
-                        + f"本次洗稿档位：{rewrite['name']}。{rewrite['instruction']}"
-                        + (_NAVAL_NAME_INSTRUCTION if force_naval_name else "")
-                        + (
-                            f"本次成稿用于竖屏视频，每个独立口播短句尽量控制在"
-                            f"{max_zh_segment_chars}个中文字以内，优先在语义和标点完整处断句。"
-                            if 0 < max_zh_segment_chars <= 30
-                            else ""
-                        )
-                    ),
-                },
-                {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
-            ],
-            "temperature": 0.35,
-            "max_tokens": _max_output_tokens(source_article),
-            "response_format": {"type": "json_object"},
-            "stream": False,
-        },
-        timeout=300,
+    rewrite_instruction = (
+        _JUNG_DEEP_POLISH_INSTRUCTION
+        if jung_deep_polish
+        else rewrite["instruction"]
     )
-    response.raise_for_status()
-    body = response.json()
-    choice = body["choices"][0]
-    if choice.get("finish_reason") == "length":
-        raise RuntimeError(
-            "DeepSeek 中文全文达到输出上限，请提高 DEEPSEEK_MAX_OUTPUT_TOKENS 或缩短原视频"
-        )
-    return _parse_json_object(choice["message"]["content"])
+
+    return _call_translation_model(
+        engine=engine,
+        system_prompt=(
+            _ARTICLE_SYS_PROMPT
+            + f"本次洗稿档位：{rewrite['name']}。{rewrite_instruction}"
+            + (_NAVAL_NAME_INSTRUCTION if force_naval_name else "")
+            + (
+                f"本次成稿用于竖屏视频，每个独立口播短句尽量控制在"
+                f"{max_zh_segment_chars}个中文字以内，优先在语义和标点完整处断句。"
+                if 0 < max_zh_segment_chars <= 30
+                else ""
+            )
+        ),
+        user_payload=payload,
+        json_schema=_ARTICLE_ZH_SCHEMA,
+        temperature=(
+            0.85
+            if retry_note and jung_deep_polish
+            else 0.72
+            if jung_deep_polish
+            else 0.35
+        ),
+        max_tokens=_max_output_tokens(source_article),
+        operation="中文全文",
+    )
+
+
+def _call_deepseek_jung_native_edit(
+    draft_article: str,
+    *,
+    retry_note: str = "",
+    engine: str = "deepseek",
+) -> dict:
+    draft_length = len(_normalize_for_comparison(draft_article))
+    payload = {
+        "task": "polish_jung_chinese_draft_as_native_voiceover",
+        "source_language": "zh",
+        "target_language": "zh",
+        "rewrite_strategy": "native_chinese_editor_second_pass",
+        "draft_article_zh": draft_article,
+        "source_length_chars": draft_length,
+        "target_length_chars": [
+            int(draft_length * 0.78),
+            int(draft_length * 1.02),
+        ],
+    }
+    if retry_note:
+        payload["quality_retry"] = retry_note
+        payload["retry_mode"] = "remove_remaining_translationese"
+    return _call_translation_model(
+        engine=engine,
+        system_prompt=_JUNG_NATIVE_EDIT_SYS_PROMPT,
+        user_payload=payload,
+        json_schema=_ARTICLE_ZH_ONLY_SCHEMA,
+        temperature=0.75 if retry_note else 0.65,
+        max_tokens=_max_output_tokens(draft_article),
+        operation="荣格母语二次顺稿",
+    )
+
+
+def _strip_markdown_markup(article: str) -> str:
+    """清除模型偶发输出的 Markdown 标记，避免 TTS 把符号读出来。"""
+    text = article or ""
+    text = re.sub(r"(?m)^[ \t]*(?:[-*_][ \t]*){3,}$", "", text)
+    text = re.sub(r"(?m)^[ \t]*#{1,6}[ \t]+", "", text)
+    text = re.sub(r"(?m)^[ \t]*(?:[-*+]|\d{1,2}[.、)])[ \t]+", "", text)
+    text = re.sub(r"(?m)^[ \t]*>[ \t]?", "", text)
+    text = re.sub(r"\*{1,3}([^*\n]+)\*{1,3}", r"\1", text)
+    text = re.sub(r"_{2,}([^_\n]+)_{2,}", r"\1", text)
+    text = re.sub(r"`+([^`\n]*)`+", r"\1", text)
+    text = text.replace("**", "").replace("`", "")
+    return text
 
 
 def _extract_chinese_article(data: dict) -> str:
     for key in ("article_zh", "zh_article", "translated_article", "content"):
         value = data.get(key)
         if isinstance(value, str) and value.strip():
-            article = value.strip()
+            article = _strip_markdown_markup(value.strip())
             article = re.sub(r"[ \t]+", " ", article)
             article = re.sub(r"\s*\n\s*", "\n", article)
-            return article
+            article = re.sub(r"\n{2,}", "\n", article)
+            return article.strip()
     raise ValueError("DeepSeek 未返回 article_zh 完整中文稿")
 
 
@@ -615,14 +811,14 @@ def _article_quality_issue(article: str, *, source_article: str = "",
                 copied_coverage = _source_ngram_coverage(
                     source_clean, article_clean, ngram_size=12
                 )
-                if copied_coverage >= 0.40:
+                if copied_coverage >= 0.60:
                     return (
                         "改写结果仍在大量照搬原句"
                         f"（12字连续片段照搬率 {copied_coverage:.0%}），"
                         "需要脱离原稿措辞重写"
                     )
                 longest_copy = matcher.find_longest_match().size
-                if longest_copy >= 36:
+                if longest_copy >= 60:
                     return (
                         f"改写结果连续照搬原稿 {longest_copy} 字，"
                         "需要重写对应段落"
@@ -646,12 +842,67 @@ def _article_quality_issue(article: str, *, source_article: str = "",
     return ""
 
 
+def _jung_native_edit_quality_issue(draft_article: str, article: str) -> str:
+    issue = _article_quality_issue(article)
+    if issue:
+        return issue
+    direct_translation_patterns = (
+        r"以[^，。！？]{1,12}(?:方式|形式)(?:出现|到来)",
+        r"把[^，。！？]{1,24}翻译成[^，。！？]{1,24}语言",
+    )
+    for pattern in direct_translation_patterns:
+        match = re.search(pattern, article)
+        if match:
+            return f"母语二次顺稿仍含机械直译：{match.group(0)}"
+    draft_size = len(_normalize_for_comparison(draft_article))
+    article_size = len(_normalize_for_comparison(article))
+    if draft_size >= 200:
+        ratio = article_size / draft_size
+        if not 0.72 <= ratio <= 1.08:
+            return (
+                "母语二次顺稿长度比例不合格"
+                f"（当前为初稿的 {ratio:.0%}，目标为 72% 至 108%）"
+            )
+    return ""
+
+
+def _edit_jung_draft_as_native_chinese(
+    draft_article: str,
+    *,
+    engine: str = "deepseek",
+) -> tuple[str, int]:
+    last_issue = ""
+    for attempt in range(2):
+        data = _call_deepseek_jung_native_edit(
+            draft_article,
+            engine=engine,
+            retry_note=(
+                f"上一次母语顺稿未通过质检：{last_issue}。"
+                "请保留完整信息，重新清除直译、重复和病句。"
+                if attempt
+                else ""
+            ),
+        )
+        article = _normalize_deep_polish_punctuation(
+            _extract_chinese_article(data)
+        )
+        last_issue = _jung_native_edit_quality_issue(draft_article, article)
+        if not last_issue:
+            return article, attempt
+        log("translate", f"荣格母语二次顺稿质检未通过，整篇重试：{last_issue}")
+    raise RuntimeError(
+        f"{_engine_display_name(engine)} 荣格母语二次顺稿连续两次未通过质检："
+        f"{last_issue}"
+    )
+
+
 def _translate_deepseek_article(source_article: str,
                                 rewrite_level: str,
                                 source_language: str = "en",
                                 max_zh_segment_chars: int = 0,
                                 bridge_cache_path: Path | None = None,
-                                force_naval_name: bool = False) -> tuple[str, dict]:
+                                force_naval_name: bool = False,
+                                engine: str = "deepseek") -> tuple[str, dict]:
     """全文中译；中文源稿改走英文语义中间稿后，不进入此英文直译循环。"""
     source_language = _normalize_source_language(source_language, source_article)
     normalized_level = _normalize_rewrite_level(rewrite_level)
@@ -662,11 +913,13 @@ def _translate_deepseek_article(source_article: str,
             normalized_level,
             bridge_cache_path=bridge_cache_path,
             force_naval_name=force_naval_name,
+            engine=engine,
         )
     last_issue = ""
     for attempt in range(2):
         data = _call_deepseek_article(
             source_article,
+            engine=engine,
             rewrite_level=rewrite_level,
             max_zh_segment_chars=max_zh_segment_chars,
             force_naval_name=force_naval_name,
@@ -676,22 +929,48 @@ def _translate_deepseek_article(source_article: str,
                 if attempt else ""
             ),
         )
-        article = _normalize_required_chinese_terms(
+        draft_article = _normalize_required_chinese_terms(
             _extract_chinese_article(data),
             force_naval_name=force_naval_name,
         )
-        if rewrite_level == "high":
-            article = _normalize_deep_polish_punctuation(article)
+        native_edit_retry_count = 0
+        native_edit_enabled = (
+            normalized_level == "high"
+            and not force_naval_name
+            and engine not in _SINGLE_PASS_ENGINES
+        )
+        if normalized_level == "high" and not force_naval_name:
+            draft_article = _normalize_deep_polish_punctuation(draft_article)
+            last_issue = _article_quality_issue(draft_article)
+            if last_issue:
+                log("translate", f"荣格中文初稿质检未通过，整篇重试：{last_issue}")
+                continue
+            if native_edit_enabled:
+                article, native_edit_retry_count = (
+                    _edit_jung_draft_as_native_chinese(
+                        draft_article,
+                        engine=engine,
+                    )
+                )
+            else:
+                article = draft_article
+        else:
+            article = draft_article
+            if normalized_level == "high":
+                article = _normalize_deep_polish_punctuation(article)
         last_issue = _article_quality_issue(article)
         if not last_issue:
             return article, {
                 "ad_removed": bool(data.get("ad_removed", False)),
                 "ad_notes": str(data.get("ad_notes") or "").strip(),
                 "quality_retry_count": attempt,
+                "native_edit_applied": native_edit_enabled,
+                "native_edit_retry_count": native_edit_retry_count,
             }
         log("translate", f"中文全文质检未通过，整篇重试：{last_issue}")
     raise RuntimeError(
-        f"DeepSeek 连续两次未返回合格中文全文：{last_issue}"
+        f"{_engine_display_name(engine)} 连续两次未返回合格中文全文："
+        f"{last_issue}"
     )
 
 
@@ -896,6 +1175,8 @@ def translate(segments: list[dict], work_dir: Path, engine: str = "deepseek",
               profile: str | None = None) -> list[dict]:
     """生成 translated.json；batch_size 仅为兼容旧调用，全文模式不会分批。"""
     del batch_size
+    engine = _normalize_engine(engine)
+    model = _engine_model(engine)
     rewrite_level = _normalize_rewrite_level(rewrite_level)
     work_dir.mkdir(parents=True, exist_ok=True)
     cache = work_dir / "translated.json"
@@ -907,6 +1188,20 @@ def translate(segments: list[dict], work_dir: Path, engine: str = "deepseek",
     source_language = _normalize_source_language(source_language, source_article)
     profile_key = str(profile or "").strip().lower()
     force_naval_name = profile_key == "naval"
+    prompt_version = (
+        (
+            _JUNG_SINGLE_PASS_PROMPT_VERSION
+            if engine in _SINGLE_PASS_ENGINES
+            else _JUNG_PROMPT_VERSION
+        )
+        if (
+            engine in AI_ENGINES
+            and source_language != "zh"
+            and rewrite_level == "high"
+            and not force_naval_name
+        )
+        else ""
+    )
     try:
         max_zh_segment_chars = int(
             config.TRANSLATE_MAX_ZH_SEGMENT_CHARS
@@ -923,9 +1218,11 @@ def translate(segments: list[dict], work_dir: Path, engine: str = "deepseek",
     if (cached
             and meta.get("version") == _CACHE_VERSION
             and meta.get("engine") == engine
+            and meta.get("model") == model
             and meta.get("rewrite_level", "high") == rewrite_level
             and meta.get("source_language", "en") == source_language
             and meta.get("profile", "") == profile_key
+            and meta.get("prompt_version", "") == prompt_version
             and int(meta.get(
                 "max_zh_segment_chars",
                 config.TRANSLATE_MAX_ZH_SEGMENT_CHARS,
@@ -936,15 +1233,13 @@ def translate(segments: list[dict], work_dir: Path, engine: str = "deepseek",
     if cached:
         log("translate", "翻译算法、引擎或英文原稿已变化，重新生成全文翻译")
 
-    log("translate", f"翻译引擎：{engine}")
+    log("translate", f"翻译引擎：{_engine_display_name(engine)}")
     article_meta = {"ad_removed": False, "ad_notes": "", "quality_retry_count": 0}
     if engine == "google":
         out = _translate_google_segments(segments)
         zh_article = "".join(item["zh"] for item in out)
         segmentation_mode = "source_segments"
     else:
-        if not config.DEEPSEEK_API_KEY:
-            raise RuntimeError("缺少 DEEPSEEK_API_KEY，请在 .env 中配置或改用 Google。")
         log("translate", f"AI 洗稿档位：{_REWRITE_LEVELS[rewrite_level]['name']}")
         source_name = "中文" if source_language == "zh" else source_language.upper()
         action_name = "深度洗稿" if source_language == "zh" else "中译洗稿"
@@ -961,6 +1256,7 @@ def translate(segments: list[dict], work_dir: Path, engine: str = "deepseek",
                 else None
             ),
             force_naval_name=force_naval_name,
+            engine=engine,
         )
         sentences = _split_zh_article(
             zh_article,
@@ -979,9 +1275,11 @@ def translate(segments: list[dict], work_dir: Path, engine: str = "deepseek",
     save_json(article_cache, {
         "version": _CACHE_VERSION,
         "engine": engine,
+        "model": model,
         "rewrite_level": rewrite_level,
         "source_language": source_language,
         "profile": profile_key,
+        "prompt_version": prompt_version,
         "max_zh_segment_chars": max_zh_segment_chars,
         ("source_article_zh" if source_language == "zh" else "source_article_en"):
             source_article,
@@ -992,9 +1290,11 @@ def translate(segments: list[dict], work_dir: Path, engine: str = "deepseek",
     save_json(meta_cache, {
         "version": _CACHE_VERSION,
         "engine": engine,
+        "model": model,
         "rewrite_level": rewrite_level,
         "source_language": source_language,
         "profile": profile_key,
+        "prompt_version": prompt_version,
         "max_zh_segment_chars": max_zh_segment_chars,
         "source_count": len(segments),
         "source_digest": source_digest,

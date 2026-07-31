@@ -132,6 +132,37 @@ try:
 except ValueError:
     DEEPSEEK_MAX_OUTPUT_TOKENS = 8192
 DEEPSEEK_MAX_OUTPUT_TOKENS = max(2048, min(32768, DEEPSEEK_MAX_OUTPUT_TOKENS))
+
+# ---------------------------------------------------------------- Claude Code 本地翻译
+def _find_claude_code_cli() -> str:
+    configured = os.environ.get("CLAUDE_CODE_CLI", "").strip()
+    if configured:
+        return configured
+    discovered = shutil.which("claude")
+    if discovered:
+        return discovered
+    for candidate in (
+        Path.home() / ".local" / "bin" / "claude.exe",
+        Path.home() / ".local" / "bin" / "claude",
+    ):
+        if candidate.is_file():
+            return str(candidate)
+    return "claude"
+
+
+CLAUDE_CODE_CLI = _find_claude_code_cli()
+CLAUDE_CODE_MODEL = os.environ.get("CLAUDE_CODE_MODEL", "sonnet").strip() or "sonnet"
+CLAUDE_CODE_EFFORT = (
+    os.environ.get("CLAUDE_CODE_EFFORT", "medium").strip().lower() or "medium"
+)
+if CLAUDE_CODE_EFFORT not in {"low", "medium", "high", "max"}:
+    CLAUDE_CODE_EFFORT = "high"
+try:
+    CLAUDE_CODE_TIMEOUT = int(os.environ.get("CLAUDE_CODE_TIMEOUT", "1800"))
+except ValueError:
+    CLAUDE_CODE_TIMEOUT = 1800
+CLAUDE_CODE_TIMEOUT = max(60, min(3600, CLAUDE_CODE_TIMEOUT))
+
 try:
     TRANSLATE_MAX_ZH_SEGMENT_CHARS = int(os.environ.get("TRANSLATE_MAX_ZH_SEGMENT_CHARS", "42"))
 except ValueError:
