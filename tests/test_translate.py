@@ -238,7 +238,11 @@ class WholeArticleTranslationTests(unittest.TestCase):
         self.assertIn("连续片段照搬率", issue)
 
     def test_deep_rewrite_rejects_a_long_copied_passage(self):
-        copied = "财富并不是银行卡上的数字，而是你睡觉时仍能创造价值的资产"
+        copied = (
+            "真正的财富并不是银行卡上的数字，而是你睡觉时仍然能够源源不断"
+            "创造价值的资产，比如产品、代码、品牌和能够昼夜不停长期持续"
+            "运转的自动化系统"
+        )
         source = (
             "有人把高收入误认为财富。"
             + copied
@@ -268,30 +272,74 @@ class WholeArticleTranslationTests(unittest.TestCase):
     @patch.object(translate.config, "DEEPSEEK_API_KEY", "test-key")
     @patch.object(translate.requests, "post")
     def test_deep_polish_prompt_requires_spoken_short_chinese_sentences(self, post):
-        post.return_value = _FakeResponse({
-            "article_zh": "“先把事情看清楚”——这是第一步；再决定下一步怎么走。这样更容易坚持下去。",
-            "ad_removed": False,
-            "ad_notes": "",
-        })
+        post.side_effect = [
+            _FakeResponse({
+                "article_zh": "“先把事情看清楚”——这是第一步；再决定下一步怎么走。这样更容易坚持下去。",
+                "ad_removed": False,
+                "ad_notes": "",
+            }),
+            _FakeResponse({
+                "article_zh": "先把事情看清楚，这是第一步，再决定下一步怎么走。这样更容易坚持下去。",
+            }),
+        ]
 
         with tempfile.TemporaryDirectory() as tmp:
             result = translate.translate(
                 self.source, Path(tmp), engine="deepseek", rewrite_level="深度顺稿"
             )
+            meta = json.loads(
+                Path(tmp, "translated.meta.json").read_text(encoding="utf-8")
+            )
 
-        request_payload = post.call_args.kwargs["json"]
+        self.assertEqual(post.call_count, 2)
+        request_payload = post.call_args_list[0].kwargs["json"]
         system_prompt = request_payload["messages"][0]["content"]
         user_payload = json.loads(request_payload["messages"][1]["content"])
+        editor_request = post.call_args_list[1].kwargs["json"]
+        editor_prompt = editor_request["messages"][0]["content"]
+        editor_payload = json.loads(editor_request["messages"][1]["content"])
         self.assertEqual(user_payload["rewrite_level"], "high")
+        self.assertEqual(
+            user_payload["rewrite_strategy"],
+            "semantic_outline_reconstruction",
+        )
+        self.assertNotIn("rewrite_instruction", user_payload)
+        self.assertGreaterEqual(request_payload["temperature"], 0.70)
         self.assertIn("拆成两到四个简单中文短句", system_prompt)
         self.assertIn("一个句子只表达一个重点", system_prompt)
         self.assertIn("这不是摘要", system_prompt)
         self.assertIn("十二到三十个中文字", system_prompt)
         self.assertIn("不要使用任何引号", system_prompt)
         self.assertIn("不要使用破折号", system_prompt)
+        self.assertIn("不要求与英文逐句对应", system_prompt)
+        self.assertIn("同义反复", system_prompt)
+        self.assertIn("通行中文译名", system_prompt)
+        self.assertIn("只输出完成母语复审后的最终稿", system_prompt)
+        self.assertNotIn("程度、情绪和结论都必须保留", system_prompt)
+        self.assertEqual(
+            editor_payload["task"],
+            "polish_jung_chinese_draft_as_native_voiceover",
+        )
+        self.assertIn("draft_article_zh", editor_payload)
+        self.assertNotIn("source_article_en", editor_payload)
+        self.assertIn("第二遍深度顺稿", editor_prompt)
+        self.assertIn("同义反复", editor_prompt)
+        self.assertIn("替别人的冷漠找理由", editor_prompt)
+        self.assertGreaterEqual(editor_request["temperature"], 0.60)
+        self.assertTrue(meta["advertising"]["native_edit_applied"])
         spoken_text = "".join(item["zh"] for item in result)
         self.assertNotRegex(spoken_text, r"[“”\"—–―：:；;…]")
         self.assertIn("先把事情看清楚，这是第一步，再决定下一步怎么走。", spoken_text)
+
+    def test_jung_native_edit_rejects_literal_english_metaphor_patterns(self):
+        draft = (
+            "这个时刻很少以爆发的方式到来。"
+            "这部分一直把别人的粗心翻译成你还能爱他们的语言。"
+        )
+
+        issue = translate._jung_native_edit_quality_issue(draft, draft)
+
+        self.assertIn("机械直译", issue)
 
     @patch.object(translate.config, "DEEPSEEK_API_KEY", "test-key")
     @patch.object(translate.requests, "post")
@@ -710,6 +758,187 @@ class WholeArticleTranslationTests(unittest.TestCase):
             "".join(item["zh"] for item in result),
             "人生迟迟没有转向，常常是因为你把决定权交了出去。不再等待外界许可，改变才真正发生。",
         )
+
+
+class ClaudeCodeTranslationEngineTests(unittest.TestCase):
+    @patch.object(translate.requests, "post")
+    @patch("src.translate.claude_code.call_structured_json")
+    def test_claude_code_engine_uses_local_cli_instead_of_deepseek(
+        self,
+        call_structured_json,
+        deepseek_post,
+    ):
+        call_structured_json.return_value = {
+            "article_zh": "纳瓦尔认为，财富的价值在于让人拥有选择时间的自由。",
+            "ad_removed": False,
+            "ad_notes": "",
+        }
+        source = [{
+            "start": 0.0,
+            "end": 4.0,
+            "text": (
+                "Naval says the value of wealth is the freedom "
+                "to choose how you spend your time."
+            ),
+        }]
+
+        with tempfile.TemporaryDirectory() as tmp:
+            work_dir = Path(tmp)
+            result = translate.translate(
+                source,
+                work_dir,
+                engine="claude_code",
+                rewrite_level="medium",
+                source_language="en",
+                max_zh_segment_chars=30,
+                profile="naval",
+            )
+            meta = json.loads(
+                (work_dir / "translated.meta.json").read_text(encoding="utf-8")
+            )
+
+        self.assertEqual(
+            "".join(item["zh"] for item in result),
+            "纳瓦尔认为，财富的价值在于让人拥有选择时间的自由。",
+        )
+        self.assertEqual(call_structured_json.call_count, 1)
+        deepseek_post.assert_not_called()
+        self.assertEqual(meta["engine"], "claude_code")
+        self.assertEqual(meta["model"], translate.config.CLAUDE_CODE_MODEL)
+
+    @patch.object(translate.requests, "post")
+    @patch("src.translate.claude_code.call_structured_json")
+    def test_claude_code_uses_single_pass_for_jung_deep_polish(
+        self,
+        call_structured_json,
+        deepseek_post,
+    ):
+        call_structured_json.side_effect = [
+            {
+                "article_zh": "疲惫通常不是突然爆发，而是在一次次忽视感受时慢慢累积。",
+                "ad_removed": False,
+                "ad_notes": "",
+            },
+        ]
+        source = [{
+            "start": 0.0,
+            "end": 5.0,
+            "text": (
+                "Exhaustion rarely arrives all at once. It grows whenever "
+                "you ignore what you feel and force yourself to continue."
+            ),
+        }]
+
+        with tempfile.TemporaryDirectory() as tmp:
+            result = translate.translate(
+                source,
+                Path(tmp),
+                engine="claude_code",
+                rewrite_level="high",
+                source_language="en",
+                max_zh_segment_chars=42,
+                profile="jung",
+            )
+            meta = translate.load_json(Path(tmp) / "translated.meta.json")
+
+        self.assertEqual(call_structured_json.call_count, 1)
+        self.assertIn(
+            "英文视频译稿编辑",
+            call_structured_json.call_args_list[0].args[0],
+        )
+        self.assertEqual(
+            "".join(item["zh"] for item in result),
+            "疲惫通常不是突然爆发，而是在一次次忽视感受时慢慢累积。",
+        )
+        self.assertFalse(meta["advertising"]["native_edit_applied"])
+        self.assertEqual(meta["prompt_version"], "jung-single-pass-v1")
+        deepseek_post.assert_not_called()
+
+    @patch("src.translate.claude_code.call_structured_json")
+    def test_claude_code_keeps_naval_chinese_english_chinese_route_and_cache(
+        self,
+        call_structured_json,
+    ):
+        english_bridge = (
+            "Naval explains that wealth matters because it gives people "
+            "control over how they spend their time."
+        )
+        call_structured_json.side_effect = [
+            {
+                "article_en": english_bridge,
+                "ad_removed": False,
+                "ad_notes": "",
+            },
+            {
+                "article_zh": "纳瓦尔认为，财富的意义，是把时间的选择权还给自己。",
+                "ad_removed": False,
+                "ad_notes": "",
+            },
+        ]
+        source = [{
+            "start": 0.0,
+            "end": 5.0,
+            "text": "纳瓦尔说，财富真正买到的是选择如何支配时间的自由。",
+        }]
+
+        with tempfile.TemporaryDirectory() as tmp:
+            work_dir = Path(tmp)
+            first = translate.translate(
+                source,
+                work_dir,
+                engine="claude_code",
+                rewrite_level="medium",
+                source_language="zh",
+                max_zh_segment_chars=30,
+                profile="naval",
+            )
+            second = translate.translate(
+                source,
+                work_dir,
+                engine="claude_code",
+                rewrite_level="medium",
+                source_language="zh",
+                max_zh_segment_chars=30,
+                profile="naval",
+            )
+            bridge_meta = json.loads(
+                (work_dir / "translation.bridge.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+
+        self.assertEqual(call_structured_json.call_count, 2)
+        rewrite_payload = call_structured_json.call_args_list[1].args[1]
+        self.assertEqual(rewrite_payload["source_article_en"], english_bridge)
+        self.assertNotIn("source_article_zh", rewrite_payload)
+        self.assertEqual(
+            rewrite_payload["required_term_translations"],
+            {"Naval": "纳瓦尔"},
+        )
+        self.assertEqual(first, second)
+        self.assertEqual(bridge_meta["engine"], "claude_code")
+        self.assertEqual(
+            bridge_meta["model"],
+            translate.config.CLAUDE_CODE_MODEL,
+        )
+
+    @patch.object(translate.requests, "post")
+    def test_unknown_engine_fails_instead_of_silently_using_deepseek(
+        self,
+        deepseek_post,
+    ):
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaisesRegex(ValueError, "未知翻译引擎"):
+                translate.translate(
+                    [{
+                        "start": 0.0,
+                        "end": 1.0,
+                        "text": "A short source sentence.",
+                    }],
+                    Path(tmp),
+                    engine="not-a-real-engine",
+                )
+        deepseek_post.assert_not_called()
 
 
 if __name__ == "__main__":

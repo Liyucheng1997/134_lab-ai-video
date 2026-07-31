@@ -26,6 +26,23 @@ def _wrap(
     fixed = normalized_mode == "fixed"
     wide = normalized_mode == "wide"
     punctuation = "，。！？、；：,.!?;: "
+    if not fixed and not wide and len(text) <= max_per_line * 2:
+        # 横屏单条字幕本来就应只有两行。先在所有能同时容纳前后两行的
+        # 标点中选择最接近中点的位置，避免为了“均衡”把中文词组从中间拆开。
+        target = (len(text) + 1) // 2
+        lower = max(1, len(text) - max_per_line)
+        upper = min(max_per_line, len(text) - 1)
+        candidates = [
+            index
+            for index in range(lower, upper + 1)
+            if text[index - 1] in punctuation
+        ]
+        cut = (
+            min(candidates, key=lambda index: abs(index - target))
+            if candidates
+            else target
+        )
+        return text[:cut].strip() + "\\N" + text[cut:].strip()
     lines: list[str] = []
     remaining = text
     while len(remaining) > max_per_line:
