@@ -40,6 +40,31 @@ class ClaudeCodeNotFoundError(ClaudeCodeError):
     """系统中找不到 Claude Code CLI。"""
 
 
+def _failure_detail(stdout: str | None) -> str:
+    """从 CLI 结果 JSON 里取出人类可读的失败原因。"""
+    text = str(stdout or "").strip()
+    if not text:
+        return ""
+    try:
+        envelope = json.loads(text)
+    except (json.JSONDecodeError, TypeError):
+        return ""
+    if not isinstance(envelope, dict):
+        return ""
+    message = " ".join(
+        str(
+            envelope.get("result")
+            or envelope.get("error")
+            or envelope.get("message")
+            or ""
+        ).split()
+    )
+    status = envelope.get("api_error_status")
+    if message and status:
+        return f"{message}（HTTP {status}）"
+    return message
+
+
 def call_structured_json(
     system_prompt: str,
     user_payload: dict[str, Any],
@@ -111,8 +136,11 @@ def call_structured_json(
             f"Claude Code CLI 调用超过 {timeout:g} 秒，已超时。"
         ) from exc
     if completed.returncode != 0:
-        detail = " ".join(str(completed.stderr or "").split())[-2000:]
-        suffix = f"：{detail}" if detail else ""
+        # CLI 把认证失败、额度超限等原因写在 stdout 的结果 JSON 里，stderr 往往是空的。
+        detail = _failure_detail(completed.stdout) or " ".join(
+            str(completed.stderr or "").split()
+        )
+        suffix = f"：{detail[-2000:]}" if detail else ""
         raise ClaudeCodeError(
             f"Claude Code CLI 调用失败（退出码 {completed.returncode}）{suffix}"
         )

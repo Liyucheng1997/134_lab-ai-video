@@ -123,6 +123,57 @@ def _load_env() -> None:
 
 _load_env()
 
+# ---------------------------------------------------------------- yt-dlp 反机器人
+# YouTube 触发“Sign in to confirm you're not a bot”时需要带上已登录 cookie。
+# 两种方式二选一，cookie 文件优先（浏览器新版加密常导致直接读取失败）。
+YTDLP_COOKIE_FILE = os.environ.get("YTDLP_COOKIE_FILE", "").strip()
+YTDLP_COOKIES_FROM_BROWSER = os.environ.get("YTDLP_COOKIES_FROM_BROWSER", "").strip()
+
+
+def ytdlp_cookie_args() -> list[str]:
+    """返回 yt-dlp 的 cookie 参数；未配置则为空。"""
+    if YTDLP_COOKIE_FILE and Path(YTDLP_COOKIE_FILE).is_file():
+        return ["--cookies", YTDLP_COOKIE_FILE]
+    if YTDLP_COOKIES_FROM_BROWSER:
+        return ["--cookies-from-browser", YTDLP_COOKIES_FROM_BROWSER]
+    return []
+
+
+# YouTube 的 n challenge 需要 JS 运行时 + yt-dlp 官方 EJS 解算脚本，
+# 否则只能拿到图片流（报错 Requested format is not available）。
+def _find_js_runtime() -> str:
+    configured = os.environ.get("YTDLP_JS_RUNTIME", "").strip()
+    if configured:
+        return configured
+    for name in ("deno", "node"):
+        found = shutil.which(name)
+        if found:
+            return f"{name}:{found}"
+    return ""
+
+
+YTDLP_JS_RUNTIME = _find_js_runtime()
+# 置空可关闭远程组件下载（届时 YouTube 大概率下载失败）。
+YTDLP_REMOTE_COMPONENTS = os.environ.get(
+    "YTDLP_REMOTE_COMPONENTS", "ejs:github"
+).strip()
+
+
+def ytdlp_challenge_args() -> list[str]:
+    """返回破解 YouTube n challenge 所需的参数。"""
+    args: list[str] = []
+    if YTDLP_JS_RUNTIME:
+        args += ["--js-runtimes", YTDLP_JS_RUNTIME]
+    if YTDLP_REMOTE_COMPONENTS:
+        args += ["--remote-components", YTDLP_REMOTE_COMPONENTS]
+    return args
+
+
+def ytdlp_access_args() -> list[str]:
+    """cookie + challenge 参数合集，所有 yt-dlp 调用都应带上。"""
+    return ytdlp_cookie_args() + ytdlp_challenge_args()
+
+
 # ---------------------------------------------------------------- DeepSeek 翻译
 DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY", "")
 DEEPSEEK_BASE_URL = os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com")

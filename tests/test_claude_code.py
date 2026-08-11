@@ -188,6 +188,34 @@ class ClaudeCodeStructuredCallTests(unittest.TestCase):
                 runner=runner,
             )
 
+    def test_reports_the_stdout_error_reason_when_stderr_is_empty(self):
+        def runner(_command, **_kwargs):
+            return SimpleNamespace(
+                returncode=1,
+                stdout=json.dumps({
+                    "type": "result",
+                    "is_error": True,
+                    "api_error_status": 401,
+                    "result": (
+                        "Failed to authenticate. API Error: 401 OAuth access "
+                        "token has expired. Re-authenticate to continue."
+                    ),
+                }),
+                stderr="",
+            )
+
+        with self.assertRaisesRegex(
+            claude_code.ClaudeCodeError,
+            r"退出码 1.*OAuth access token has expired.*HTTP 401",
+        ):
+            claude_code.call_structured_json(
+                "Return JSON.",
+                {"value": 1},
+                {"type": "object"},
+                cli_path="C:/tools/claude.exe",
+                runner=runner,
+            )
+
     def test_rejects_stdout_that_is_not_valid_json(self):
         def runner(_command, **_kwargs):
             return SimpleNamespace(
