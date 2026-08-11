@@ -88,7 +88,8 @@ def run_download(job_id: str, cfg: dict) -> dict:
         m4a = wd / "source.m4a"
         if not m4a.exists():
             log("download", f"下载音频：{url}")
-            download._ytdlp_stream([*config.YT_DLP, "--newline", "-f", "ba/b",
+            download._ytdlp_stream([*config.YT_DLP, "--newline",
+                 *config.ytdlp_access_args(), "-f", "ba/b",
                  "-x", "--audio-format", "m4a",
                  "--ffmpeg-location", str(Path(config.FFMPEG).parent),
                  "-o", str(wd / "source.%(ext)s"), url])
