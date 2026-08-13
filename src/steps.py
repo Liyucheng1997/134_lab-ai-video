@@ -88,11 +88,21 @@ def run_download(job_id: str, cfg: dict) -> dict:
         m4a = wd / "source.m4a"
         if not m4a.exists():
             log("download", f"下载音频：{url}")
-            download._ytdlp_stream([*config.YT_DLP, "--newline",
-                 *config.ytdlp_access_args(), "-f", "ba/b",
+            download.ensure_pot_server()
+            audio_base = [*config.YT_DLP, "--newline", "--no-continue",
+                 *config.ytdlp_access_args(),
                  "-x", "--audio-format", "m4a",
                  "--ffmpeg-location", str(Path(config.FFMPEG).parent),
-                 "-o", str(wd / "source.%(ext)s"), url])
+                 "-o", str(wd / "source.%(ext)s")]
+            try:
+                download._ytdlp_stream([*audio_base, "-f", "ba/b", url])
+            except RuntimeError:
+                # SABR 实验会封锁 DASH 音频流，降级到 mweb 渐进流抽音轨
+                download._clean_partial_downloads(wd)
+                log("download", "音频流被 YouTube 拦截，降级到 360p 渐进流抽音轨…")
+                download._ytdlp_stream([*audio_base,
+                     "--extractor-args", "youtube:player_client=mweb",
+                     "-f", "18/b", url])
         if not (wd / "source.wav").exists():
             run([config.FFMPEG, "-y", "-i", str(m4a), "-vn", "-ac", "1", "-ar", "16000",
                  str(wd / "source.wav")], desc="抽 16k 音轨")
