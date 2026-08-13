@@ -22,7 +22,7 @@ YouTube URL
 
 - **项目内环境 `tools/f5-tts-env`**：Python 3.12 + PyTorch 2.12(cu130) + F5-TTS + faster-whisper，已适配 RTX 50 系列。
 - **ffmpeg**：项目优先使用 `tools/ffmpeg-nvenc-compatible/`（含 libass + NVENC）。这个版本兼容当前 NVIDIA 驱动；过新的 ffmpeg 会要求 NVENC API 13.1 / 610+ 驱动并导致硬件编码不可用。
-- **yt-dlp**：优先使用本项目环境里的 `tools/f5-tts-env`（以 `python -m yt_dlp` 调用）。
+- **yt-dlp**：优先使用本项目环境里的 `tools/f5-tts-env`（以 `python -m yt_dlp` 调用）。YouTube 反爬需要三件套：`.env` 里配置浏览器导出的 cookie（`YTDLP_COOKIE_FILE`）、本机 node/deno 作 JS 运行时、`tools/bgutil-pot/`（[bgutil-ytdlp-pot-provider](https://github.com/Brainicism/bgutil-ytdlp-pot-provider) 源码构建，配合 pip 装的同名插件提供 PO token，下载时自动拉起常驻服务）。高清流被 YouTube SABR 实验拦截时会自动降级 360p。
 - **模型缓存**：F5-TTS / Whisper 权重缓存在项目内 `models/` 目录。
 
 ## 配置

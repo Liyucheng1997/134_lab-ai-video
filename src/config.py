@@ -174,6 +174,12 @@ def ytdlp_access_args() -> list[str]:
     return ytdlp_cookie_args() + ytdlp_challenge_args()
 
 
+# bgutil PO token 服务：YouTube 对无 PO token 的会话隐藏或封锁高清流。
+# tools/bgutil-pot/server/build/main.js 常驻在 4416 端口，yt-dlp 插件会自动发现。
+POT_SERVER_JS = BASE_DIR / "tools" / "bgutil-pot" / "server" / "build" / "main.js"
+POT_SERVER_PORT = 4416
+
+
 # ---------------------------------------------------------------- DeepSeek 翻译
 DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY", "")
 DEEPSEEK_BASE_URL = os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com")

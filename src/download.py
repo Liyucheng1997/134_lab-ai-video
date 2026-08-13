@@ -3,7 +3,9 @@ from __future__ import annotations
 
 import hashlib
 import re
+import shutil
 import subprocess
+import time
 from pathlib import Path
 
 from . import config
@@ -83,6 +85,46 @@ def _ytdlp_stream(cmd: list[str]) -> None:
         )
 
 
+def ensure_pot_server() -> None:
+    """确保 bgutil PO token 服务在 4416 端口常驻；不可用时静默跳过。
+
+    YouTube 对无 PO token 的会话隐藏或封锁高清流。服务是独立 node 进程，
+    yt-dlp 的 bgutil 插件会自动探测端口，无需额外参数。
+    """
+    if not config.POT_SERVER_JS.is_file():
+        return
+    node = shutil.which("node")
+    if not node:
+        return
+    import socket
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        probe.settimeout(1)
+        if probe.connect_ex(("127.0.0.1", config.POT_SERVER_PORT)) == 0:
+            return                                    # 已在运行
+    log("download", "启动 PO token 服务（bgutil）…")
+    subprocess.Popen(
+        [node, str(config.POT_SERVER_JS)],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        creationflags=_NO_WINDOW | getattr(subprocess, "DETACHED_PROCESS", 0),
+    )
+    for _ in range(10):                               # 最多等 10 秒
+        time.sleep(1)
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+            probe.settimeout(1)
+            if probe.connect_ex(("127.0.0.1", config.POT_SERVER_PORT)) == 0:
+                return
+
+
+def _clean_partial_downloads(work_dir: Path) -> None:
+    """删除断点续传残留：旧 .part 里的下载地址已过期，续传只会一直 403。"""
+    for part in work_dir.glob("*.part"):
+        try:
+            part.unlink()
+            log("download", f"清理失效断点文件：{part.name}")
+        except OSError:
+            pass
+
+
 def video_id_from_url(url: str) -> str:
     """从 URL 提取一个稳定的工作目录名（YouTube id 或 url 哈希）。"""
     m = re.search(r"(?:v=|youtu\.be/|/shorts/|/embed/)([A-Za-z0-9_-]{11})", url)
@@ -132,15 +174,31 @@ def download(url: str, work_dir: Path) -> tuple[Path, Path]:
         log("download", f"下载视频：{url}")
         if config.ytdlp_cookie_args():
             log("download", "使用 cookie 认证")
-        _ytdlp_stream([
-            *config.YT_DLP, "--no-playlist", "--newline",
+        ensure_pot_server()
+        base = [
+            *config.YT_DLP, "--no-playlist", "--newline", "--no-continue",
             *config.ytdlp_access_args(),
-            "-f", "bv*[ext=mp4][height<=1080]+ba[ext=m4a]/b[ext=mp4]/b",
             "--merge-output-format", "mp4",
             "--ffmpeg-location", str(Path(config.FFMPEG).parent),
             "-o", str(video),
-            url,
-        ])
+        ]
+        try:
+            _ytdlp_stream([
+                *base,
+                "-f", "bv*[ext=mp4][height<=1080]+ba[ext=m4a]/b[ext=mp4]/b",
+                url,
+            ])
+        except RuntimeError:
+            # YouTube 的 SABR 实验会让高清 DASH 流中途 403。
+            # 降级到 mweb 渐进流（360p），保证流水线能继续跑。
+            _clean_partial_downloads(work_dir)
+            log("download", "高清流被 YouTube 拦截，降级到 360p 渐进流重试…")
+            _ytdlp_stream([
+                *base,
+                "--extractor-args", "youtube:player_client=mweb",
+                "-f", "18/b[ext=mp4]/b",
+                url,
+            ])
     else:
         log("download", "视频已存在，跳过下载")
 
