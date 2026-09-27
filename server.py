@@ -22,7 +22,7 @@ from fastapi import FastAPI, Form, UploadFile, File, HTTPException, Body
 from fastapi.responses import (FileResponse, HTMLResponse, JSONResponse,
                                StreamingResponse)
 
-from src import config, profiles
+from src import config, profiles, scene_art
 from src.steps import STEP_DEFS, final_path, work_dir_of
 from src.utils import load_json, media_duration
 
@@ -992,10 +992,24 @@ def _calibrated_seconds_per_sentence() -> dict[str, float]:
     return rates
 
 
+def _ai_paint_budget_sec(job_id: str) -> int | None:
+    """第 5 步选了 AI 手绘时，按作画时限估时（与句子数关系不大）。"""
+    cfg = load_json(_work_path(job_id) / "cfg" / "compose.json") or {}
+    if cfg.get("mode") != "ai_paint":
+        return None
+    try:
+        budget = max(1.0, min(120.0, float(cfg.get("art_time_budget", 18))))
+    except (TypeError, ValueError):
+        budget = 18.0
+    return round(budget * 60 * 0.8 + 60)
+
+
 def _update_estimate_calibration(job_id: str, completed_step: str) -> None:
     sentences = _sentence_count(job_id)
     if sentences <= 0:
         return
+    if completed_step == "compose" and _ai_paint_budget_sec(job_id):
+        return          # AI 手绘耗时由作画时限决定，不参与按句子数的校准
     data = _read_estimate_calibration()
     steps = data.get("steps") if isinstance(data.get("steps"), dict) else {}
     now = time.time()
@@ -1040,6 +1054,9 @@ def _step_estimate_seconds(duration: float, job_id: str | None = None) -> dict[s
 def _estimate_job(job_id: str, fallback_duration: float | None = None) -> dict:
     duration = _known_duration(job_id, fallback_duration)
     steps = _step_estimate_seconds(duration, job_id)
+    ai_budget = _ai_paint_budget_sec(job_id)
+    if ai_budget:
+        steps["compose"] = ai_budget
     for key in list(steps):
         actual = _actual_step_elapsed(job_id, key)
         if actual is not None:
@@ -1332,6 +1349,10 @@ def get_config():
         ],
         "sub_presets": config.SUB_PRESETS,
         "sub_preset_default": config.SUB_PRESET,
+        "art_styles": scene_art.public_styles(),
+        "art_style_default": scene_art.DEFAULT_STYLE,
+        "art_model": config.SCENE_ART_MODEL,
+        "art_browser_ok": bool(config.SCENE_ART_BROWSER),
         "sub_cover_default": config.SUB_COVER_DEFAULT,
         "sub_cover_opacity_default": config.SUB_COVER_OPACITY,
         "sub_cover_height_default": config.SUB_COVER_HEIGHT,

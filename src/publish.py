@@ -243,7 +243,7 @@ def make_cover_from_image(src: Path, out_png: Path, title: str, *,
                           font_size: int = 132, box_width: float = 0.62,
                           target_size: tuple[int, int] = (1920, 1080)) -> Path:
     """用户上传底图 + 标题叠字。坐标/宽度为 0~1 归一化值。"""
-    from PIL import Image, ImageDraw
+    from PIL import Image
 
     img = Image.open(src).convert("RGB")
     target_w, target_h = target_size
@@ -253,7 +253,33 @@ def make_cover_from_image(src: Path, out_png: Path, title: str, *,
     left = max(0, (nw - target_w) // 2)
     top = max(0, (nh - target_h) // 2)
     img = img.crop((left, top, left + target_w, top + target_h)).convert("RGBA")
+    img = _draw_title_block(img, title, x=x, y=y, font_size=font_size, box_width=box_width)
 
+    out_png.parent.mkdir(parents=True, exist_ok=True)
+    img.convert("RGB").save(out_png)
+    log("archive", f"封面图已生成：{out_png.name}")
+    return out_png
+
+
+def make_title_overlay(out_png: Path, title: str, *, x: float = 0.07, y: float = 0.10,
+                       font_size: int = 132, box_width: float = 0.62,
+                       target_size: tuple[int, int] = (1920, 1080)) -> Path:
+    """只画标题块的透明 PNG，供动态画面在 ffmpeg 里整片叠加。"""
+    from PIL import Image
+
+    img = Image.new("RGBA", target_size, (0, 0, 0, 0))
+    img = _draw_title_block(img, title, x=x, y=y, font_size=font_size, box_width=box_width)
+    out_png.parent.mkdir(parents=True, exist_ok=True)
+    img.save(out_png)
+    return out_png
+
+
+def _draw_title_block(img, title: str, *, x: float, y: float, font_size: int,
+                      box_width: float):
+    """在 RGBA 图上画半透明底板 + 黄白描边大字，返回新图。"""
+    from PIL import Image, ImageDraw
+
+    target_w, target_h = img.size
     overlay = Image.new("RGBA", (target_w, target_h), (0, 0, 0, 0))
     od = ImageDraw.Draw(overlay, "RGBA")
     box_w_px = int(target_w * max(0.20, min(0.92, float(box_width or 0.62))))
@@ -279,11 +305,7 @@ def make_cover_from_image(src: Path, out_png: Path, title: str, *,
         draw.text((x_px + stroke, yy + stroke), line, font=font, fill=(0, 0, 0, 170))
         draw.text((x_px, yy), line, font=font, fill=colors[i % len(colors)],
                   stroke_width=stroke, stroke_fill=(8, 8, 8))
-
-    out_png.parent.mkdir(parents=True, exist_ok=True)
-    img.convert("RGB").save(out_png)
-    log("archive", f"封面图已生成：{out_png.name}")
-    return out_png
+    return img
 
 
 def _vertical_avatar_crop(img, target_w: int, target_h: int):

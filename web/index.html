@@ -336,6 +336,8 @@
   .subtitle-controls>*{min-width:0}
   .subtitle-controls select,.subtitle-controls input{min-width:0}
   .subtitle-controls label{margin-top:13px}
+  .art-controls{display:grid;grid-template-columns:1fr 1fr;gap:0 10px;max-width:560px}
+  .art-controls>*{min-width:0}.art-controls select{min-width:0;width:100%}
   .preview-toggle{margin-top:10px;border:1px solid var(--line);background:rgba(255,255,255,.58);border-radius:11px;
     padding:9px 12px;display:flex;align-items:center;justify-content:space-between;cursor:pointer;color:var(--ink);font-weight:700;font-size:13px}
   .preview-toggle span{color:var(--mut);font-weight:600}
@@ -787,10 +789,25 @@ function cfgHtml(key){
         <div><label>画面来源</label><select id="cm-mode" onchange="updateComposeMode()">
           <option value="original">使用原视频画面</option>
           <option value="image">使用一张图片</option>
+          <option value="ai_paint">AI 手绘（Claude 按文稿作画）</option>
         </select></div>
-        <div id="cm-image-box" class="hide" style="flex:1 1 100%"><label>上传画面图片</label>
+        <div id="cm-art-box" class="hide" style="flex:1 1 100%">
+          <div class="art-controls">
+            <div><label>绘画风格</label><select id="cm-art-style">
+              ${(CFG.art_styles||[]).map(a=>`<option value="${a.key}" ${a.key===(localStorage.getItem("artStyle")||CFG.art_style_default)?"selected":""}>${a.name}</option>`).join("")}</select></div>
+            <div><label>每幅画约覆盖</label><select id="cm-art-scene-sec">
+              ${[20,30,40,60,90].map(v=>`<option value="${v}" ${v===40?"selected":""}>${v} 秒</option>`).join("")}</select></div>
+            <div><label>同时作画</label><select id="cm-art-concurrency">
+              ${[2,4,6,8].map(v=>`<option value="${v}" ${v===6?"selected":""}>${v} 幅</option>`).join("")}</select></div>
+            <div><label>作画时限</label><select id="cm-art-budget">
+              ${[10,15,18,25,40].map(v=>`<option value="${v}" ${v===18?"selected":""}>${v} 分钟</option>`).join("")}</select></div>
+          </div>
+          <div style="margin-top:8px"><span class="radio"><input type="checkbox" id="cm-art-animate" checked> 画面动起来（元素循环动效 + 镜头缓慢平移）</span></div>
+          <div class="hint">按文稿每几句话画一幅（最多 48 幅，长视频自动放宽每幅时长），走本机 Claude Code 订阅额度（模型 ${esc(CFG.art_model||"")}）用 SVG 作画，再由本机浏览器渲染。超过时限未画完的场景沿用相邻画面；已画好的场景会缓存，重跑直接复用。${CFG.art_browser_ok?"":"<b>未找到 Edge/Chrome，无法渲染画面。</b>"}</div>
+        </div>
+        <div id="cm-image-box" class="hide" style="flex:1 1 100%"><div id="cm-image-upload"><label>上传画面图片</label>
           <input type="file" id="cm-image-file" accept="image/png,image/jpeg,image/webp">
-          <div class="hint" id="cm-image-name">图片会等比缩放并补边到 1920×1080，时长跟随配音。</div>
+          <div class="hint" id="cm-image-name">图片会等比缩放并补边到 1920×1080，时长跟随配音。</div></div>
           <div style="margin-top:10px">
             <span class="radio"><input type="checkbox" id="cm-image-title-enabled" onchange="updateImageTitlePreview()"> 固定画面顶部文字</span>
           </div>
@@ -898,17 +915,24 @@ function wireCompose(){
     const el=document.getElementById(id);
     if(el)el.addEventListener(id==="cm-image-title-enabled"?"change":"input",updateImageTitlePreview);
   });
+  const artStyle=document.getElementById("cm-art-style");
+  if(artStyle)artStyle.onchange=()=>{try{localStorage.setItem("artStyle",artStyle.value);}catch(e){}};
   applySubPresetDefaults();
   updateComposeMode();
   updateComposeAudioPreview(true);
 }
+function composeMode(){return document.getElementById("cm-mode")?.value||"original";}
+function composeUsesPicture(){const m=composeMode();return m==="image"||m==="ai_paint";}
 function updateComposeMode(){
-  const mode=document.getElementById("cm-mode");
-  const imageMode=!!mode&&mode.value==="image";
+  const imageMode=composeMode()==="image",aiMode=composeMode()==="ai_paint";
   const imageBox=document.getElementById("cm-image-box");
-  if(imageBox)imageBox.classList.toggle("hide",!imageMode);
+  if(imageBox)imageBox.classList.toggle("hide",!imageMode&&!aiMode);
+  const upload=document.getElementById("cm-image-upload");
+  if(upload)upload.classList.toggle("hide",!imageMode);
+  const artBox=document.getElementById("cm-art-box");
+  if(artBox)artBox.classList.toggle("hide",!aiMode);
   const originalCover=document.getElementById("cm-cover");
-  if(originalCover)originalCover.disabled=imageMode;
+  if(originalCover)originalCover.disabled=imageMode||aiMode;
   const preview=document.getElementById("sub-prev");
   if(preview){
     preview.style.backgroundImage=imageMode&&composeImageUrl?`url("${composeImageUrl}")`:"";
@@ -922,7 +946,7 @@ function updateImageTitlePreview(){
   if(!box||!title)return;
   const p=currentProfile(),canvasW=+(p.canvas_width||1920),canvasH=+(p.canvas_height||1080);
   box.classList.toggle("vertical",canvasH>canvasW);
-  const imageMode=document.getElementById("cm-mode")?.value==="image";
+  const imageMode=composeUsesPicture();
   const enabled=!!document.getElementById("cm-image-title-enabled")?.checked;
   const value=document.getElementById("cm-image-title")?.value.trim()||"根据中文稿自动生成";
   const font=+(document.getElementById("cm-image-title-font")?.value||110);
@@ -1041,7 +1065,7 @@ function updateSubPreview(){
   t.style.fontWeight=String(s.bold)==="1"?"800":"500";
   t.style.textShadow=`${-o}px ${-o}px 0 ${s.outline},${o}px ${-o}px 0 ${s.outline},${-o}px ${o}px 0 ${s.outline},${o}px ${o}px 0 ${s.outline}`;
   if(box)box.style.alignItems={bottom:"flex-end",middle:"center",top:"flex-start"}[s.position]||"flex-end";
-  const portraitImage=(document.getElementById("cm-mode")?.value==="image")&&canvasH>canvasW;
+  const portraitImage=composeUsesPicture()&&canvasH>canvasW;
   if(portraitImage&&s.position==="top"){
     const margin=+(p.subtitle_marginv||430);
     t.style.position="absolute";
@@ -1063,7 +1087,7 @@ function updateSubPreview(){
     t.style.left="auto";
     t.style.width="auto";
   }
-  const imageMode=document.getElementById("cm-mode")?.value==="image";
+  const imageMode=composeUsesPicture();
   const covOn=document.getElementById("cm-cover"),on=!!(covOn&&covOn.checked&&!imageMode);
   const covBox=document.getElementById("cm-cover-box");if(covBox)covBox.classList.toggle("hide",!on);
   const opEl=document.getElementById("cm-cover-op"),hEl=document.getElementById("cm-cover-h");
@@ -1114,6 +1138,11 @@ function collect(step,forceTts){const g=id=>document.getElementById(id),profile=
     image_title_width:+(g("cm-image-title-width")?.value||84)/100,
     image_title_x:+(g("cm-image-title-x")?.value||0)/100,
     image_title_y:+(g("cm-image-title-y")?.value||0)/100,
+    art_style:g("cm-art-style")?.value||CFG.art_style_default,
+    art_scene_seconds:+(g("cm-art-scene-sec")?.value||40),
+    art_concurrency:+(g("cm-art-concurrency")?.value||6),
+    art_time_budget:+(g("cm-art-budget")?.value||18),
+    art_animate:g("cm-art-animate")?g("cm-art-animate").checked:true,
     bilingual:g("cm-bi").checked,burn:g("cm-burn").checked,
     cover_original:!!g("cm-cover")?.checked,
     cover_opacity:(+(g("cm-cover-op")?.value)||90)/100,

@@ -54,10 +54,18 @@ powershell -ExecutionPolicy Bypass -File .\web.ps1
 |----|--------|------|
 | 1 视频下载 | 链接或上传；下载视频并提取音频 | 原视频播放 |
 | 2 语音识别 | 模型(small/large-v3-turbo)、语言 | 逐句原文 |
-| 3 翻译/洗稿 | **DeepSeek** / **Claude Code（本地订阅额度）** / **Google 免费**；两种 AI 引擎共用同一套洗稿流程，自动判断外语中译或中文深度洗稿，清除广告并按中文重分句。Claude Code 引擎调用本机已登录的 `claude` CLI，走订阅额度而非 API key，可用 `CLAUDE_CODE_MODEL`、`CLAUDE_CODE_EFFORT`、`CLAUDE_CODE_TIMEOUT`、`CLAUDE_CODE_CLI` 覆盖 | 原稿与中文稿对照 |
+| 3 翻译/洗稿 | **DeepSeek** / **Claude Code（本地订阅额度）** / **Google 免费**；两种 AI 引擎共用同一套洗稿流程，自动判断外语中译或中文深度洗稿，清除广告并按中文重分句。Claude Code 引擎调用本机已登录的 `claude` CLI，走订阅额度而非 API key，默认 Opus 5.5 + medium，可用 `CLAUDE_CODE_MODEL`、`CLAUDE_CODE_EFFORT`、`CLAUDE_CODE_TIMEOUT`、`CLAUDE_CODE_CLI` 覆盖 | 原稿与中文稿对照 |
 | 4 中文配音 | **F5-TTS**，音色、语速、并发数，可**试听** | 配音音轨试听 |
-| 5 合成 | 可选原视频画面或上传一张图片；画面按当前配置生成横屏或 9:16 竖屏视频，并与配音、字幕合成；图片模式可添加第 6 步风格的画面文字，并调整字号、宽度及位置；支持 ass/srt/vtt、中英双语、硬字幕、配音二次变速 | 画面文字与字幕可视化 + 成片 + 下载 |
+| 5 合成 | 可选原视频画面、上传一张图片，或 **AI 手绘**（见下）；画面按当前配置生成横屏或 9:16 竖屏视频，并与配音、字幕合成；图片模式可添加第 6 步风格的画面文字，并调整字号、宽度及位置；支持 ass/srt/vtt、中英双语、硬字幕、配音二次变速 | 画面文字与字幕可视化 + 成片 + 下载 |
 | 6 生成信息归档 | 信息模板(B站)、分区、版权类型 | 自动生成标题/简介/标签/分区，并把成片、封面和数据保存到 `output` 子文件夹 |
+
+### 第 5 步 AI 手绘（Claude 按文稿作画 + 动画）
+
+- 按配音时间轴每几句话分一个场景（默认约 40 秒一幅，最多 48 幅，长视频自动放宽），不逐帧对齐以保证速度。
+- 并发调用本机 Claude Code（订阅额度，默认 `claude-opus-5-5`、力度 low）为每个场景画一幅 SVG 插画；可选风格：古典油画、中国水墨、日系动漫、超现实梦境、荣格红书。
+- 勾选「画面动起来」时，Opus 在 SVG 里写 CSS 循环动画（周期整除 6 秒），由 Playwright 驱动本机 Edge 逐帧定格录制 6 秒无缝循环；合成时每个场景循环播放，再叠加缓慢平移运镜与换场暗场淡入。
+- 有总时限（默认 18 分钟），超时未画的场景沿用相邻画面；已画场景按「风格 + 文本 + 画布 + 动静」缓存在 `work/<id>/scenes/`，重跑直接复用。
+- 环境变量：`SCENE_ART_MODEL`、`SCENE_ART_EFFORT`、`SCENE_ART_TIMEOUT`、`SCENE_ART_BROWSER`（默认自动找 Edge/Chrome）。需 `pip install playwright`（使用本机 Edge，无需 `playwright install`）。
 
 每步产物缓存在 `work/<id>/`，可单独重跑。每步以独立子进程执行（崩溃隔离 + CUDA 安全）。
 

@@ -11,7 +11,7 @@ import uuid
 from pathlib import Path
 
 from . import (compose as compose_mod, config, download, profiles, publish as publish_mod,
-               subtitles, translate as translate_mod, transcribe, tts)
+               scene_art, subtitles, translate as translate_mod, transcribe, tts)
 from .utils import load_json, log, run, save_json
 
 # UI 用的步骤定义：key / 名称 / 依赖的上一步 / 完成标志文件
@@ -332,6 +332,8 @@ def run_compose(job_id: str, cfg: dict) -> dict:
         log("compose", f"底部色条遮挡原片烧死字幕：开启（不透明度 {opacity:.2f}，高度 {height:.0%}）")
 
     out = final_path(job_id)
+    if mode == "ai_paint":
+        return _compose_ai_paint(wd, cfg, segs, (ass if cfg.get("burn", True) else None), out)
     image_title = _resolve_image_title(wd, cfg) if mode == "image" else ""
     compose_mod.compose(
         mode=mode, work_dir=wd, audio=wd / "dub.wav",
@@ -354,6 +356,55 @@ def run_compose(job_id: str, cfg: dict) -> dict:
             int(cfg.get("canvas_width", 1920)),
             int(cfg.get("canvas_height", 1080)),
         ],
+    }
+
+
+def _cfg_num(cfg: dict, key: str, default: float, lo: float, hi: float) -> float:
+    try:
+        return max(lo, min(hi, float(cfg.get(key, default))))
+    except (TypeError, ValueError):
+        return default
+
+
+def _compose_ai_paint(wd: Path, cfg: dict, segs: list[dict], ass: Path | None,
+                      out: Path) -> dict:
+    """AI 手绘模式：Claude 按场景作画（带循环动画）→ 按时间轴加运镜拼成视频。"""
+    width = int(cfg.get("canvas_width", 1920))
+    height = int(cfg.get("canvas_height", 1080))
+    image_title = _resolve_image_title(wd, cfg)
+    full_text = "".join(str(s.get("zh") or "") for s in segs)
+    topic = image_title or full_text[:300]
+    scenes = scene_art.generate_scenes(
+        segs, wd,
+        style=cfg.get("art_style"),
+        width=width, height=height,
+        scene_seconds=_cfg_num(cfg, "art_scene_seconds", 40, 10, 300),
+        max_scenes=int(_cfg_num(cfg, "art_max_scenes", 48, 1, 200)),
+        concurrency=int(_cfg_num(cfg, "art_concurrency", 6, 1, 12)),
+        time_budget_min=_cfg_num(cfg, "art_time_budget", 18, 1, 120),
+        topic=topic,
+        animate=bool(cfg.get("art_animate", True)),
+    )
+    title_png = None
+    if image_title:
+        title_png = publish_mod.make_title_overlay(
+            wd / "scenes" / "title_overlay.png", image_title,
+            x=float(cfg.get("image_title_x", 0.54)),
+            y=float(cfg.get("image_title_y", 0.18)),
+            font_size=int(cfg.get("image_title_font_size", 144)),
+            box_width=float(cfg.get("image_title_width", 0.38)),
+            target_size=(width, height),
+        )
+    compose_mod.scenes_to_video(scenes, wd / "dub.wav", ass, out, width=width, height=height,
+                                title_png=title_png)
+    return {
+        "mode": "ai_paint",
+        "output": str(out),
+        "image_title": image_title,
+        "art_style": scene_art.normalize_style(cfg.get("art_style")),
+        "scenes": len(scenes),
+        "animated": sum(1 for sc in scenes if sc.get("loop")),
+        "canvas": [width, height],
     }
 
 
