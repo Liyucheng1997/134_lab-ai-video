@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import shutil
 import subprocess
 
 from . import config, mux
@@ -233,6 +234,100 @@ def image_to_video(image: Path, audio: Path, ass: Path | None, out_path: Path, *
     return out_path
 
 
+def _even(v: float) -> int:
+    return int(round(v / 2)) * 2
+
+
+def _scene_clip_cmd(sc: dict, frames: int, fps: int, index: int, clip: Path, *,
+                    width: int, height: int, fade: float, encoder: list[str]) -> list[str]:
+    """一个场景片段：循环动画（或静态图）+ 缓慢镜头平移 + 开头短暂暗场淡入。"""
+    loop = sc.get("loop")
+    if loop and Path(loop).is_file():
+        src = ["-stream_loop", "-1", "-i", str(loop)]
+    else:
+        src = ["-loop", "1", "-framerate", str(fps), "-i", str(sc["png"])]
+    dur = frames / fps
+    zw, zh = _even(width * 1.07), _even(height * 1.07)
+    # 四种运镜轮换：左→右、右→左、上→下、下→上；缩放后裁切出画布，按时间线性平移。
+    p = f"min(t/{dur:.3f}\\,1)"
+    move = [(f"(iw-ow)*{p}", "(ih-oh)/2"), (f"(iw-ow)*(1-{p})", "(ih-oh)/2"),
+            ("(iw-ow)/2", f"(ih-oh)*{p}"), ("(iw-ow)/2", f"(ih-oh)*(1-{p})")][index % 4]
+    vf = (f"scale={zw}:{zh}:flags=bicubic,crop={width}:{height}:x='{move[0]}':y='{move[1]}',"
+          f"setsar=1,fps={fps},format=yuv420p")
+    if index > 0 and fade > 0:
+        vf += f",fade=t=in:st=0:d={min(fade, dur / 2):.3f}:color=0x0b0b0b"
+    return [config.FFMPEG, "-y", "-hide_banner", *src, "-vf", vf, "-frames:v", str(frames),
+            "-an", *encoder, "-r", str(fps), "-g", str(fps * 2), str(clip)]
+
+
+def scenes_to_video(scenes: list[dict], audio: Path, ass: Path | None, out_path: Path, *,
+                    width: int = 1920, height: int = 1080, fps: int = 25, fade: float = 0.5,
+                    title_png: Path | None = None) -> Path:
+    """场景（循环动画或静态图）按时间轴拼接 + 配音 + 字幕/标题 → 成片。
+
+    先逐场景编码片段（并行），无损拼接后再统一烧字幕、混音，保证时间轴按帧对齐不漂移。
+    """
+    from concurrent.futures import ThreadPoolExecutor
+    from .utils import media_duration
+
+    total = media_duration(audio) or float(scenes[-1]["end"])
+    marks = [0] + [round(float(sc["start"]) * fps) for sc in scenes[1:]] + [round(total * fps)]
+    use_nvenc = _nvenc_available()
+    encoder = (["-c:v", "h264_nvenc", "-preset", "p4", "-cq", "20", "-pix_fmt", "yuv420p"]
+               if use_nvenc else
+               ["-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p"])
+
+    clip_dir = out_path.with_name("scene_clips")
+    shutil.rmtree(clip_dir, ignore_errors=True)
+    clip_dir.mkdir(parents=True)
+    jobs = []
+    for i, sc in enumerate(scenes):
+        frames = max(1, marks[i + 1] - marks[i])
+        clip = clip_dir / f"clip_{i:04d}.mp4"
+        jobs.append((clip, _scene_clip_cmd(sc, frames, fps, i, clip, width=width,
+                                           height=height, fade=fade, encoder=encoder)))
+    done = {"n": 0}
+
+    def _encode(job):
+        clip, cmd = job
+        run(cmd)
+        done["n"] += 1
+        pct = 90 + round(done["n"] / len(jobs) * 6)
+        log("compose", f"场景片段编码：第 {done['n']} 段，共 {len(jobs)} 段（{pct}%）")
+        return clip
+
+    try:
+        # NVENC 家用卡同时会话有限，3 路并行足够。
+        with ThreadPoolExecutor(max_workers=3 if use_nvenc else 2) as pool:
+            clips = list(pool.map(_encode, jobs))
+
+        list_file = clip_dir / "concat.txt"
+        list_file.write_text(
+            "".join(f"file '{c.name}'\n" for c in clips), encoding="utf-8")
+        filters = []
+        inputs = [config.FFMPEG, "-y", "-hide_banner", "-f", "concat", "-safe", "0",
+                  "-i", str(list_file), "-i", str(audio)]
+        chain = "[0:v]"
+        if title_png is not None:
+            inputs += ["-i", str(title_png)]
+            filters.append(f"{chain}[2:v]overlay=0:0[vt]")
+            chain = "[vt]"
+        if ass:
+            filters.append(f"{chain}subtitles='{_escape_subs(ass)}'[vs]")
+            chain = "[vs]"
+        if filters:
+            cmd = inputs + ["-filter_complex", ";".join(filters), "-map", chain]
+        else:
+            cmd = inputs + ["-map", "0:v"]
+        cmd += ["-map", "1:a", *encoder, "-c:a", "aac", "-b:a", "192k", "-shortest",
+                "-movflags", "+faststart", str(out_path)]
+        run(cmd, desc=f"{len(clips)} 段场景 + 配音 + 字幕 合成成片（98%）")
+        log("compose", f"输出完成：{out_path}")
+        return out_path
+    finally:
+        shutil.rmtree(clip_dir, ignore_errors=True)
+
+
 def compose(*, mode: str, work_dir: Path, audio: Path, ass: Path | None,
             out_path: Path, title: str = "", bg: str = "#10131a",
             bg2: str | None = "#1d2740", image: Path | None = None,
@@ -240,7 +335,7 @@ def compose(*, mode: str, work_dir: Path, audio: Path, ass: Path | None,
             title_font_size: int = 132, title_width: float = 0.62,
             canvas_width: int = 1920, canvas_height: int = 1080,
             cover: dict | None = None) -> Path:
-    """统一入口。mode: original | image。封面生成由第 6 步归档负责。
+    """统一入口。mode: original | image（ai_paint 由 steps 生成场景后调用 scenes_to_video）。
 
     cover：底部遮挡色条参数（仅 original 模式生效；图片模式没有原字幕，忽略）。
     """

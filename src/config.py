@@ -208,17 +208,51 @@ def _find_claude_code_cli() -> str:
 
 
 CLAUDE_CODE_CLI = _find_claude_code_cli()
-CLAUDE_CODE_MODEL = os.environ.get("CLAUDE_CODE_MODEL", "sonnet").strip() or "sonnet"
+CLAUDE_CODE_MODEL = (
+    os.environ.get("CLAUDE_CODE_MODEL", "claude-opus-5-5").strip() or "claude-opus-5-5"
+)
 CLAUDE_CODE_EFFORT = (
     os.environ.get("CLAUDE_CODE_EFFORT", "medium").strip().lower() or "medium"
 )
 if CLAUDE_CODE_EFFORT not in {"low", "medium", "high", "max"}:
-    CLAUDE_CODE_EFFORT = "high"
+    CLAUDE_CODE_EFFORT = "medium"
 try:
     CLAUDE_CODE_TIMEOUT = int(os.environ.get("CLAUDE_CODE_TIMEOUT", "1800"))
 except ValueError:
     CLAUDE_CODE_TIMEOUT = 1800
 CLAUDE_CODE_TIMEOUT = max(60, min(3600, CLAUDE_CODE_TIMEOUT))
+
+# ---------------------------------------------------------------- 第 5 步 AI 手绘画面
+# Claude Code 本地额度画 SVG，再用本机 Edge/Chrome 无头模式渲染成 PNG。
+SCENE_ART_MODEL = os.environ.get("SCENE_ART_MODEL", "claude-opus-5-5").strip() or "claude-opus-5-5"
+SCENE_ART_EFFORT = os.environ.get("SCENE_ART_EFFORT", "low").strip().lower() or "low"
+if SCENE_ART_EFFORT not in {"low", "medium", "high", "max"}:
+    SCENE_ART_EFFORT = "low"
+try:
+    SCENE_ART_TIMEOUT = max(60, min(900, int(os.environ.get("SCENE_ART_TIMEOUT", "300"))))
+except ValueError:
+    SCENE_ART_TIMEOUT = 300
+
+
+def _find_headless_browser() -> str:
+    configured = os.environ.get("SCENE_ART_BROWSER", "").strip()
+    if configured:
+        return configured
+    roots = [os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)"),
+             os.environ.get("ProgramFiles", r"C:\Program Files"),
+             os.environ.get("LOCALAPPDATA", "")]
+    for root in roots:
+        if not root:
+            continue
+        for rel in (r"Microsoft\Edge\Application\msedge.exe",
+                    r"Google\Chrome\Application\chrome.exe"):
+            cand = Path(root) / rel
+            if cand.is_file():
+                return str(cand)
+    return shutil.which("msedge") or shutil.which("chrome") or ""
+
+
+SCENE_ART_BROWSER = _find_headless_browser()
 
 try:
     TRANSLATE_MAX_ZH_SEGMENT_CHARS = int(os.environ.get("TRANSLATE_MAX_ZH_SEGMENT_CHARS", "42"))

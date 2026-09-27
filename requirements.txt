@@ -17,6 +17,9 @@ yt-dlp>=2026.6
 biliup>=1.2
 qrcode[pil]>=8.2
 
+# 第 5 步 AI 手绘动画：驱动本机 Edge/Chrome 逐帧录制（无需 playwright install）
+playwright>=1.40
+
 # Web 服务
 fastapi>=0.115
 uvicorn>=0.30
