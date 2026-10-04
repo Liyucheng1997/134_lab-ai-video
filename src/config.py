@@ -254,6 +254,17 @@ def _find_headless_browser() -> str:
 
 SCENE_ART_BROWSER = _find_headless_browser()
 
+# ---------------------------------------------------------------- 第 5 步 手绘动画（hand-drawn-story-video 引擎）
+# Claude Code 按章写画面指令（人物表演 + 布景 + 镜头），引擎逐帧渲染。
+HAND_DRAWN_MODEL = os.environ.get("HAND_DRAWN_MODEL", "claude-opus-5-5").strip() or "claude-opus-5-5"
+HAND_DRAWN_EFFORT = os.environ.get("HAND_DRAWN_EFFORT", "medium").strip().lower() or "medium"
+if HAND_DRAWN_EFFORT not in {"low", "medium", "high", "max"}:
+    HAND_DRAWN_EFFORT = "medium"
+try:
+    HAND_DRAWN_TIMEOUT = max(60, min(1200, int(os.environ.get("HAND_DRAWN_TIMEOUT", "480"))))
+except ValueError:
+    HAND_DRAWN_TIMEOUT = 480
+
 try:
     TRANSLATE_MAX_ZH_SEGMENT_CHARS = int(os.environ.get("TRANSLATE_MAX_ZH_SEGMENT_CHARS", "42"))
 except ValueError:

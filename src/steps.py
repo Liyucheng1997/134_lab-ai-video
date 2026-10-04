@@ -10,7 +10,7 @@ import time
 import uuid
 from pathlib import Path
 
-from . import (compose as compose_mod, config, download, profiles, publish as publish_mod,
+from . import (compose as compose_mod, config, download, hand_drawn, profiles, publish as publish_mod,
                scene_art, subtitles, translate as translate_mod, transcribe, tts)
 from .utils import load_json, log, run, save_json
 
@@ -278,6 +278,9 @@ def _resolve_image_title(wd: Path, cfg: dict) -> str:
 # ----------------------------------------------------------------- 5) 合成
 def run_compose(job_id: str, cfg: dict) -> dict:
     wd = work_dir_of(job_id)
+    if cfg.get("mode") == "hand_drawn" and cfg.get("hd_vertical", True):
+        # 手绘动画一律竖屏 9:16（抖音），字幕画布也跟着换
+        cfg = {**cfg, "canvas_width": 1080, "canvas_height": 1920}
     segs = _apply_compose_audio_speed(wd, cfg.get("audio_speed", 1.0))
     if not segs:
         segs = load_json(wd / "dub_segments.json") or load_json(wd / "translated.json")
@@ -334,6 +337,8 @@ def run_compose(job_id: str, cfg: dict) -> dict:
     out = final_path(job_id)
     if mode == "ai_paint":
         return _compose_ai_paint(wd, cfg, segs, (ass if cfg.get("burn", True) else None), out)
+    if mode == "hand_drawn":
+        return _compose_hand_drawn(wd, cfg, segs, ass, out)
     image_title = _resolve_image_title(wd, cfg) if mode == "image" else ""
     compose_mod.compose(
         mode=mode, work_dir=wd, audio=wd / "dub.wav",
@@ -406,6 +411,35 @@ def _compose_ai_paint(wd: Path, cfg: dict, segs: list[dict], ass: Path | None,
         "animated": sum(1 for sc in scenes if sc.get("loop")),
         "canvas": [width, height],
     }
+
+
+def _compose_hand_drawn(wd: Path, cfg: dict, segs: list[dict], ass: Path, out: Path) -> dict:
+    """手绘动画模式：Q 版人物 + 手绘画布（hand-drawn-story-video 引擎），动作卡在配音时间轴上。
+
+    字幕二选一：引擎按画风画的手绘字幕（默认），或沿用上面生成的 ASS 字幕（双语时只能用 ASS）。
+    """
+    width = int(cfg.get("canvas_width", 1920))
+    height = int(cfg.get("canvas_height", 1080))
+    burn = bool(cfg.get("burn", True))
+    engine_subs = burn and bool(cfg.get("hd_engine_subs", True)) and not cfg.get("bilingual")
+    image_title = _resolve_image_title(wd, cfg)
+    full_text = "".join(str(s.get("zh") or "") for s in segs)
+    info = hand_drawn.make_video(
+        segs, wd, wd / "dub.wav", out,
+        ass=(ass if burn and not engine_subs else None),
+        width=width, height=height,
+        topic=image_title or full_text[:300],
+        fps=int(_cfg_num(cfg, "hd_fps", 25, 15, 30)),
+        chapter_seconds=_cfg_num(cfg, "hd_chapter_seconds", 60, 20, 300),
+        concurrency=int(_cfg_num(cfg, "hd_concurrency", 6, 1, 12)),
+        time_budget_min=_cfg_num(cfg, "hd_time_budget", 15, 2, 120),
+        workers=int(_cfg_num(cfg, "hd_workers", 6, 1, 12)),
+        bgm=bool(cfg.get("hd_bgm", True)),
+        sfx=bool(cfg.get("hd_sfx", True)),
+        engine_subs=engine_subs,
+    )
+    return {"mode": "hand_drawn", "output": str(out), "image_title": image_title,
+            "canvas": [width, height], **info}
 
 
 # ----------------------------------------------------------------- 6) 保存信息归档

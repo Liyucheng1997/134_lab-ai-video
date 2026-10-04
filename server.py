@@ -995,6 +995,14 @@ def _calibrated_seconds_per_sentence() -> dict[str, float]:
 def _ai_paint_budget_sec(job_id: str) -> int | None:
     """第 5 步选了 AI 手绘时，按作画时限估时（与句子数关系不大）。"""
     cfg = load_json(_work_path(job_id) / "cfg" / "compose.json") or {}
+    if cfg.get("mode") == "hand_drawn":
+        # 分镜（受时限约束，通常几分钟）+ 逐帧渲染（约为视频时长的 1–2 倍）
+        try:
+            budget = max(2.0, min(120.0, float(cfg.get("hd_time_budget", 15))))
+        except (TypeError, ValueError):
+            budget = 15.0
+        duration = _known_duration(job_id, None) or 300
+        return round(min(budget * 60, 360) + duration * 1.5 + 60)
     if cfg.get("mode") != "ai_paint":
         return None
     try:
@@ -1353,6 +1361,7 @@ def get_config():
         "art_style_default": scene_art.DEFAULT_STYLE,
         "art_model": config.SCENE_ART_MODEL,
         "art_browser_ok": bool(config.SCENE_ART_BROWSER),
+        "hd_model": config.HAND_DRAWN_MODEL,
         "sub_cover_default": config.SUB_COVER_DEFAULT,
         "sub_cover_opacity_default": config.SUB_COVER_OPACITY,
         "sub_cover_height_default": config.SUB_COVER_HEIGHT,

@@ -790,7 +790,27 @@ function cfgHtml(key){
           <option value="original">使用原视频画面</option>
           <option value="image">使用一张图片</option>
           <option value="ai_paint">AI 手绘（Claude 按文稿作画）</option>
+          <option value="hand_drawn">手绘动画（Q 版人物表演 + 手绘画布）</option>
         </select></div>
+        <div id="cm-hd-box" class="hide" style="flex:1 1 100%">
+          <div class="art-controls">
+            <div><label>每章约</label><select id="cm-hd-chapter">
+              ${[40,60,90,120].map(v=>`<option value="${v}" ${v===60?"selected":""}>${v} 秒</option>`).join("")}</select></div>
+            <div><label>同时写分镜</label><select id="cm-hd-concurrency">
+              ${[2,4,6,8].map(v=>`<option value="${v}" ${v===6?"selected":""}>${v} 章</option>`).join("")}</select></div>
+            <div><label>分镜时限</label><select id="cm-hd-budget">
+              ${[8,15,25,40].map(v=>`<option value="${v}" ${v===15?"selected":""}>${v} 分钟</option>`).join("")}</select></div>
+            <div><label>渲染并行</label><select id="cm-hd-workers">
+              ${[4,6,8].map(v=>`<option value="${v}" ${v===6?"selected":""}>${v} 路</option>`).join("")}</select></div>
+          </div>
+          <div style="margin-top:8px">
+            <span class="radio"><input type="checkbox" id="cm-hd-bgm" checked> 程序合成配乐</span>
+            <span class="radio"><input type="checkbox" id="cm-hd-sfx" checked> 动作音效</span>
+            <span class="radio"><input type="checkbox" id="cm-hd-vertical" checked> 竖屏 9:16（1080×1920，抖音）</span>
+            <span class="radio"><input type="checkbox" id="cm-hd-subs" checked> 字幕用画风自带的手绘样式（双语时自动改用 ASS）</span>
+          </div>
+          <div class="hint">按 hand-drawn-story-video 的引擎制作：Claude Code（模型 ${esc(CFG.hd_model||"")}）先按题材定画风（水彩绘本/黑板/蓝图/水墨/默片…）、人物造型，再按章写分镜——人物的姿势、表情、走位、气泡、对口型和布景涂鸦、镜头推拉都卡在配音时间轴上；本机浏览器逐帧渲染（10 分钟视频约 10–20 分钟）。分镜会缓存，重跑直接复用。${CFG.art_browser_ok?"":"<b>未找到 Edge/Chrome，无法渲染画面。</b>"}</div>
+        </div>
         <div id="cm-art-box" class="hide" style="flex:1 1 100%">
           <div class="art-controls">
             <div><label>绘画风格</label><select id="cm-art-style">
@@ -922,9 +942,11 @@ function wireCompose(){
   updateComposeAudioPreview(true);
 }
 function composeMode(){return document.getElementById("cm-mode")?.value||"original";}
-function composeUsesPicture(){const m=composeMode();return m==="image"||m==="ai_paint";}
+function composeUsesPicture(){const m=composeMode();return m==="image"||m==="ai_paint"||m==="hand_drawn";}
 function updateComposeMode(){
-  const imageMode=composeMode()==="image",aiMode=composeMode()==="ai_paint";
+  const imageMode=composeMode()==="image",aiMode=composeMode()==="ai_paint",hdMode=composeMode()==="hand_drawn";
+  const hdBox=document.getElementById("cm-hd-box");
+  if(hdBox)hdBox.classList.toggle("hide",!hdMode);
   const imageBox=document.getElementById("cm-image-box");
   if(imageBox)imageBox.classList.toggle("hide",!imageMode&&!aiMode);
   const upload=document.getElementById("cm-image-upload");
@@ -932,7 +954,7 @@ function updateComposeMode(){
   const artBox=document.getElementById("cm-art-box");
   if(artBox)artBox.classList.toggle("hide",!aiMode);
   const originalCover=document.getElementById("cm-cover");
-  if(originalCover)originalCover.disabled=imageMode||aiMode;
+  if(originalCover)originalCover.disabled=imageMode||aiMode||hdMode;
   const preview=document.getElementById("sub-prev");
   if(preview){
     preview.style.backgroundImage=imageMode&&composeImageUrl?`url("${composeImageUrl}")`:"";
@@ -1143,6 +1165,14 @@ function collect(step,forceTts){const g=id=>document.getElementById(id),profile=
     art_concurrency:+(g("cm-art-concurrency")?.value||6),
     art_time_budget:+(g("cm-art-budget")?.value||18),
     art_animate:g("cm-art-animate")?g("cm-art-animate").checked:true,
+    hd_chapter_seconds:+(g("cm-hd-chapter")?.value||60),
+    hd_concurrency:+(g("cm-hd-concurrency")?.value||6),
+    hd_time_budget:+(g("cm-hd-budget")?.value||15),
+    hd_workers:+(g("cm-hd-workers")?.value||6),
+    hd_bgm:g("cm-hd-bgm")?g("cm-hd-bgm").checked:true,
+    hd_sfx:g("cm-hd-sfx")?g("cm-hd-sfx").checked:true,
+    hd_engine_subs:g("cm-hd-subs")?g("cm-hd-subs").checked:true,
+    hd_vertical:g("cm-hd-vertical")?g("cm-hd-vertical").checked:true,
     bilingual:g("cm-bi").checked,burn:g("cm-burn").checked,
     cover_original:!!g("cm-cover")?.checked,
     cover_opacity:(+(g("cm-cover-op")?.value)||90)/100,
